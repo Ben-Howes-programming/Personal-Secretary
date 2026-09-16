@@ -2,7 +2,15 @@ import os
 import base64
 import json
 import sqlite3
+
 from datetime import datetime, timedelta
+
+from database.database import (
+    initialise_database,
+    save_email,
+    email_is_cached,
+    get_cached_email
+)
 
 from dotenv import load_dotenv
 from anthropic import Anthropic
@@ -338,155 +346,6 @@ Return only the JSON object.
         "availability_request": False,
         "summary": "The email could not be analysed.",
     }
-
-
-# ============================================================
-# DATABASE
-# ============================================================
-
-def initialise_database():
-    connection = sqlite3.connect(DB_FILE)
-    cursor = connection.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS emails (
-            id TEXT PRIMARY KEY,
-            sender TEXT,
-            subject TEXT,
-            date TEXT,
-            body TEXT,
-            category TEXT,
-            priority TEXT,
-            action_required INTEGER,
-            reply_needed INTEGER,
-            availability_request INTEGER,
-            requested_day TEXT,
-            requested_start TEXT,
-            requested_end TEXT,
-            summary TEXT,
-            draft_reply TEXT
-        )
-    """)
-
-    # Upgrade the database from earlier versions.
-    cursor.execute("PRAGMA table_info(emails)")
-    columns = [row[1] for row in cursor.fetchall()]
-
-    upgrades = {
-        "reply_needed": "ALTER TABLE emails ADD COLUMN reply_needed INTEGER DEFAULT 0",
-        "draft_reply": "ALTER TABLE emails ADD COLUMN draft_reply TEXT",
-        "availability_request": "ALTER TABLE emails ADD COLUMN availability_request INTEGER DEFAULT 0",
-        "requested_day": "ALTER TABLE emails ADD COLUMN requested_day TEXT",
-        "requested_start": "ALTER TABLE emails ADD COLUMN requested_start TEXT",
-        "requested_end": "ALTER TABLE emails ADD COLUMN requested_end TEXT",
-    }
-
-    for column, statement in upgrades.items():
-        if column not in columns:
-            cursor.execute(statement)
-
-    connection.commit()
-    connection.close()
-
-
-def save_email(email):
-    connection = sqlite3.connect(DB_FILE)
-    cursor = connection.cursor()
-
-    analysis = email["analysis"]
-
-    cursor.execute("""
-        INSERT OR REPLACE INTO emails (
-            id,
-            sender,
-            subject,
-            date,
-            body,
-            category,
-            priority,
-            action_required,
-            reply_needed,
-            availability_request,
-            requested_day,
-            requested_start,
-            requested_end,
-            summary,
-            draft_reply
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        email["id"],
-        email["sender"],
-        email["subject"],
-        email["date"],
-        email["body"],
-        analysis.get("category"),
-        analysis.get("priority"),
-        int(analysis.get("action_required", False)),
-        int(analysis.get("reply_needed", False)),
-        int(analysis.get("availability_request", False)),
-        analysis.get("requested_day"),
-        analysis.get("requested_start"),
-        analysis.get("requested_end"),
-        analysis.get("summary"),
-        email.get("draft_reply"),
-    ))
-
-    connection.commit()
-    connection.close()
-
-
-def email_is_cached(message_id):
-    connection = sqlite3.connect(DB_FILE)
-    cursor = connection.cursor()
-
-    cursor.execute(
-        "SELECT id FROM emails WHERE id = ?",
-        (message_id,),
-    )
-
-    result = cursor.fetchone()
-    connection.close()
-
-    return result is not None
-
-
-def get_cached_email(message_id):
-    connection = sqlite3.connect(DB_FILE)
-    connection.row_factory = sqlite3.Row
-    cursor = connection.cursor()
-
-    cursor.execute(
-        "SELECT * FROM emails WHERE id = ?",
-        (message_id,),
-    )
-
-    row = cursor.fetchone()
-    connection.close()
-
-    if row is None:
-        return None
-
-    return {
-        "id": row["id"],
-        "sender": row["sender"],
-        "subject": row["subject"],
-        "date": row["date"],
-        "body": row["body"],
-        "analysis": {
-            "category": row["category"],
-            "priority": row["priority"],
-            "action_required": bool(row["action_required"]),
-            "reply_needed": bool(row["reply_needed"]),
-            "availability_request": bool(row["availability_request"]),
-            "requested_day": row["requested_day"],
-            "requested_start": row["requested_start"],
-            "requested_end": row["requested_end"],
-            "summary": row["summary"],
-        },
-        "draft_reply": row["draft_reply"],
-    }
-
 
 # ============================================================
 # CALENDAR
