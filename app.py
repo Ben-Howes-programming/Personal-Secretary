@@ -1,22 +1,33 @@
 import os
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 from dotenv import load_dotenv
 
-from services.gmail import get_gmail_service, get_email
+from services.gmail import (
+    get_gmail_service,
+    get_email,
+)
+
 from services.calendar import (
     get_calendar_service,
     get_calendar_for_period,
     find_free_slots,
 )
-from ai.claude import create_client, analyse_email, draft_reply
+
+from ai.claude import (
+    create_client,
+    analyse_email,
+    draft_reply,
+)
 
 from database.database import (
     initialise_database,
     save_email,
     email_is_cached,
     get_cached_email,
+    update_draft_reply,
 )
 
 
@@ -35,14 +46,27 @@ st.set_page_config(
 
 initialise_database()
 
+LONDON = ZoneInfo("Europe/London")
+
 
 # ============================================================
 # HELPER FUNCTIONS
 # ============================================================
 
-def format_event(event):
-    """Turn a Google Calendar event into readable text."""
+def priority_icon(priority):
+    if priority == "High":
+        return "🔴"
 
+    if priority == "Medium":
+        return "🟠"
+
+    if priority == "Low":
+        return "🔵"
+
+    return "⚪"
+
+
+def format_event(event):
     start = event["start"].get(
         "dateTime",
         event["start"].get("date")
@@ -53,9 +77,16 @@ def format_event(event):
         event["end"].get("date")
     )
 
-    summary = event.get("summary", "Untitled event")
+    summary = event.get(
+        "summary",
+        "Untitled event"
+    )
+
+    if not start:
+        return f"All day — {summary}"
 
     if "T" in start:
+
         start_dt = datetime.fromisoformat(start)
         end_dt = datetime.fromisoformat(end)
 
@@ -65,23 +96,51 @@ def format_event(event):
             f"{summary}"
         )
 
-    return f"All day  —  {summary}"
+    return f"All day — {summary}"
 
 
-def priority_icon(priority):
-    """Return a simple visual indicator for priority."""
+def format_event_date(event):
+    start = event["start"].get(
+        "dateTime",
+        event["start"].get("date")
+    )
 
-    if priority == "High":
-        return "🔴"
+    if "T" in start:
 
-    if priority == "Medium":
-        return "🟠"
+        start_dt = datetime.fromisoformat(start)
 
-    return "🔵"
+        return start_dt.strftime(
+            "%A %d %B"
+        )
+
+    date_dt = datetime.fromisoformat(start)
+
+    return date_dt.strftime(
+        "%A %d %B"
+    )
+
+
+def sender_name(sender):
+    if not sender:
+        return "Unknown sender"
+
+    if "<" in sender:
+        return sender.split("<")[0].strip().strip('"')
+
+    return sender
 
 
 def load_emails(gmail, client):
-    """Load recent emails and analyse uncached emails."""
+    """
+    Load recent emails.
+
+    Cached emails are read from SQLite.
+
+    New emails are analysed by Claude.
+
+    Older cached emails that lack availability
+    information are re-analysed when appropriate.
+    """
 
     emails = []
 
@@ -90,7 +149,10 @@ def load_emails(gmail, client):
         maxResults=20,
     ).execute()
 
-    messages = results.get("messages", [])
+    messages = results.get(
+        "messages",
+        []
+    )
 
     for message in messages:
 
@@ -98,7 +160,38 @@ def load_emails(gmail, client):
 
         if email_is_cached(message_id):
 
-            email = get_cached_email(message_id)
+            email = get_cached_email(
+                message_id
+            )
+
+            analysis = email.get(
+                "analysis",
+                {}
+            )
+
+            # Older database records did not contain
+            # availability information.
+            #
+            # Re-analyse tutoring/reply emails so the
+            # new functionality can understand them.
+            if (
+                client
+                and analysis.get("reply_needed")
+                and email.get("analysis_version", 1) <= 3
+            ):
+
+                analysis = analyse_email(
+                    client,
+                    email,
+                )
+
+                email["analysis"] = analysis
+
+                # Discard any draft produced using the
+                # old analysis.
+                email["draft_reply"] = None
+
+                save_email(email)
 
         else:
 
@@ -127,7 +220,13 @@ def load_emails(gmail, client):
                     "priority": "Unknown",
                     "action_required": False,
                     "reply_needed": False,
-                    "summary": "Claude is not connected.",
+                    "availability_request": False,
+                    "requested_day": None,
+                    "requested_start": None,
+                    "requested_end": None,
+                    "summary": (
+                        "Claude is not connected."
+                    ),
                 }
 
         emails.append(email)
@@ -135,14 +234,90 @@ def load_emails(gmail, client):
     return emails
 
 
+def get_next_sunday(now):
+    days_until_sunday = (
+        6 - now.weekday()
+    ) % 7
+
+    return (
+        now
+        + timedelta(days=days_until_sunday)
+    )
+
+
+def calculate_tutoring_availability(
+    calendar_service,
+    now,
+):
+    if not calendar_service:
+        return [], None
+
+    tutoring_day = get_next_sunday(now)
+
+    tutoring_start = tutoring_day.replace(
+        hour=12,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+    tutoring_end = tutoring_day.replace(
+        hour=18,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+
+    free_slots = find_free_slots(
+        calendar_service,
+        tutoring_start,
+        tutoring_end,
+        lesson_minutes=60,
+    )
+
+    return free_slots, tutoring_day
+
+
+def availability_for_email(
+    email,
+    free_slots,
+):
+    analysis = email.get(
+        "analysis",
+        {}
+    )
+
+    if not analysis.get(
+        "availability_request",
+        False,
+    ):
+        return None
+
+    requested_day = analysis.get(
+        "requested_day"
+    )
+
+    # At the moment our tutoring availability
+    # calculation is for Sunday.
+    #
+    # If Claude identifies Sunday, use it.
+    if requested_day == "Sunday":
+        return free_slots
+
+    return None
+
+
 # ============================================================
 # HEADER
 # ============================================================
 
-st.title("🤖 Ben's Personal Assistant")
-st.caption("Your personal command centre")
+st.title(
+    "🤖 Ben's Personal Assistant"
+)
 
-st.divider()
+st.caption(
+    "Your personal command centre"
+)
 
 
 # ============================================================
@@ -157,15 +332,15 @@ with st.sidebar:
         "🔄 Refresh",
         use_container_width=True,
     ):
+
         st.cache_resource.clear()
+
         st.rerun()
 
     st.divider()
 
-    st.subheader("Quick navigation")
-
-    st.caption(
-        "Your assistant currently connects to:"
+    st.subheader(
+        "Connected services"
     )
 
     st.write("📧 Gmail")
@@ -174,16 +349,21 @@ with st.sidebar:
 
     st.divider()
 
-    st.caption(
-        "Future assistant features"
+    st.subheader(
+        "Assistant roadmap"
     )
 
-    st.write("✉️ Email management")
-    st.write("📅 Calendar management")
-    st.write("🎓 Tutoring")
-    st.write("💰 Finance & investments")
-    st.write("📝 Tasks")
-    st.write("🤖 AI command centre")
+    st.write("✓ Email triage")
+    st.write("✓ Calendar awareness")
+    st.write("✓ Tutoring availability")
+    st.write("✓ AI reply drafts")
+
+    st.write("⬜ Calendar management")
+    st.write("⬜ Task management")
+    st.write("⬜ Multiple calendars")
+    st.write("⬜ Tutoring workflow")
+    st.write("⬜ Finance & investments")
+    st.write("⬜ Natural-language command centre")
 
 
 # ============================================================
@@ -203,9 +383,12 @@ calendar_error = None
 claude_error = None
 
 
+# Gmail
+
 try:
 
     gmail = get_gmail_service()
+
     gmail_connected = True
 
 except Exception as e:
@@ -213,9 +396,12 @@ except Exception as e:
     gmail_error = str(e)
 
 
+# Calendar
+
 try:
 
     calendar_service = get_calendar_service()
+
     calendar_connected = True
 
 except Exception as e:
@@ -223,10 +409,21 @@ except Exception as e:
     calendar_error = str(e)
 
 
+# Claude
+
 try:
 
+    api_key = os.environ.get(
+        "ANTHROPIC_API_KEY"
+    )
+
+    if not api_key:
+        raise ValueError(
+            "ANTHROPIC_API_KEY is not set."
+        )
+
     client = create_client(
-        os.environ["ANTHROPIC_API_KEY"]
+        api_key
     )
 
     claude_connected = True
@@ -234,6 +431,15 @@ try:
 except Exception as e:
 
     claude_error = str(e)
+
+
+# ============================================================
+# CURRENT TIME
+# ============================================================
+
+now = datetime.now(
+    LONDON
+)
 
 
 # ============================================================
@@ -254,25 +460,33 @@ if gmail_connected:
     except Exception as e:
 
         gmail_connected = False
+
         gmail_error = str(e)
 
 
 # ============================================================
-# LOAD TODAY'S CALENDAR
+# LOAD CALENDAR
 # ============================================================
 
-today = datetime.now()
-
-day_start = today.replace(
+today_start = now.replace(
     hour=0,
     minute=0,
     second=0,
     microsecond=0,
 )
 
-day_end = day_start + timedelta(days=1)
+tomorrow_start = (
+    today_start
+    + timedelta(days=1)
+)
+
+week_end = (
+    today_start
+    + timedelta(days=7)
+)
 
 today_events = []
+week_events = []
 
 if calendar_connected:
 
@@ -280,14 +494,45 @@ if calendar_connected:
 
         today_events = get_calendar_for_period(
             calendar_service,
-            day_start,
-            day_end,
+            today_start,
+            tomorrow_start,
+        )
+
+        week_events = get_calendar_for_period(
+            calendar_service,
+            today_start,
+            week_end,
         )
 
     except Exception as e:
 
         calendar_connected = False
+
         calendar_error = str(e)
+
+
+# ============================================================
+# TUTORING AVAILABILITY
+# ============================================================
+
+free_slots = []
+tutoring_day = None
+
+if calendar_connected:
+
+    try:
+
+        free_slots, tutoring_day = (
+            calculate_tutoring_availability(
+                calendar_service,
+                now,
+            )
+        )
+
+    except Exception:
+
+        free_slots = []
+        tutoring_day = None
 
 
 # ============================================================
@@ -297,37 +542,86 @@ if calendar_connected:
 action_required = [
     email
     for email in emails
-    if email.get("analysis", {}).get(
+    if email.get(
+        "analysis",
+        {}
+    ).get(
         "action_required",
         False,
     )
 ]
 
+
 reply_needed = [
     email
     for email in emails
-    if email.get("analysis", {}).get(
+    if email.get(
+        "analysis",
+        {}
+    ).get(
         "reply_needed",
         False,
     )
 ]
 
+
 tutoring_enquiries = [
     email
-    for email in emails
-    if (
-        email.get("analysis", {}).get("category")
-        == "Tutoring"
-        and email.get("analysis", {}).get(
-            "action_required",
-            False,
-        )
-    )
+    for email in action_required
+    if email.get(
+        "analysis",
+        {}
+    ).get(
+        "category"
+    ) == "Tutoring"
+]
+
+
+high_priority = [
+    email
+    for email in action_required
+    if email.get(
+        "analysis",
+        {}
+    ).get(
+        "priority"
+    ) == "High"
 ]
 
 
 # ============================================================
-# TOP METRICS
+# BRIEFING
+# ============================================================
+
+st.divider()
+
+if high_priority:
+
+    st.warning(
+        f"🔴 You have {len(high_priority)} "
+        f"high-priority item"
+        f"{'s' if len(high_priority) != 1 else ''} "
+        f"requiring attention."
+    )
+
+elif action_required:
+
+    st.info(
+        f"You have {len(action_required)} "
+        f"email"
+        f"{'s' if len(action_required) != 1 else ''} "
+        f"requiring attention."
+    )
+
+else:
+
+    st.success(
+        "✓ Nothing currently requires your attention."
+    )
+
+
+# ============================================================
+# METRICS
 # ============================================================
 
 col1, col2, col3, col4 = st.columns(4)
@@ -356,8 +650,8 @@ with col3:
 with col4:
 
     st.metric(
-        "🎓 Tutoring",
-        len(tutoring_enquiries),
+        "📅 Events today",
+        len(today_events),
     )
 
 
@@ -365,46 +659,68 @@ with col4:
 # SYSTEM STATUS
 # ============================================================
 
-with st.expander("System status"):
+with st.expander(
+    "System status"
+):
 
     status1, status2, status3 = st.columns(3)
 
     with status1:
 
         if gmail_connected:
-            st.success("✓ Gmail connected")
+            st.success(
+                "✓ Gmail connected"
+            )
         else:
-            st.error("✗ Gmail unavailable")
+            st.error(
+                "✗ Gmail unavailable"
+            )
 
             if gmail_error:
-                st.caption(gmail_error)
+                st.caption(
+                    gmail_error
+                )
 
     with status2:
 
         if calendar_connected:
-            st.success("✓ Google Calendar connected")
+            st.success(
+                "✓ Google Calendar connected"
+            )
         else:
-            st.error("✗ Google Calendar unavailable")
+            st.error(
+                "✗ Google Calendar unavailable"
+            )
 
             if calendar_error:
-                st.caption(calendar_error)
+                st.caption(
+                    calendar_error
+                )
 
     with status3:
 
         if claude_connected:
-            st.success("✓ Claude connected")
+            st.success(
+                "✓ Claude connected"
+            )
         else:
-            st.error("✗ Claude unavailable")
+            st.error(
+                "✗ Claude unavailable"
+            )
 
             if claude_error:
-                st.caption(claude_error)
+                st.caption(
+                    claude_error
+                )
 
 
 # ============================================================
 # MAIN DASHBOARD
 # ============================================================
 
-left, right = st.columns([1.15, 1])
+left, right = st.columns(
+    [1.2, 1]
+)
 
 
 # ============================================================
@@ -413,12 +729,14 @@ left, right = st.columns([1.15, 1])
 
 with left:
 
-    st.subheader("⚠️ Requires your attention")
+    st.subheader(
+        "⚠️ Requires your attention"
+    )
 
     if not action_required:
 
         st.success(
-            "Nothing currently requires your attention."
+            "Nothing currently requires action."
         )
 
     else:
@@ -427,7 +745,7 @@ with left:
 
             analysis = email.get(
                 "analysis",
-                {},
+                {}
             )
 
             priority = analysis.get(
@@ -445,16 +763,22 @@ with left:
                 "No subject",
             )
 
-            icon = priority_icon(priority)
+            icon = priority_icon(
+                priority
+            )
 
-            with st.container(border=True):
+            with st.container(
+                border=True
+            ):
 
                 st.markdown(
-                    f"### {icon} {category} — {subject}"
+                    f"### {icon} {subject}"
                 )
 
                 st.caption(
-                    f"From: {email.get('sender', 'Unknown')}"
+                    f"{category} • "
+                    f"{priority} priority • "
+                    f"{sender_name(email.get('sender'))}"
                 )
 
                 st.write(
@@ -464,17 +788,54 @@ with left:
                     )
                 )
 
-                if analysis.get("reply_needed"):
+                if analysis.get(
+                    "reply_needed"
+                ):
 
                     st.caption(
                         "✉️ A reply is needed"
                     )
 
-                # ------------------------------------------------
-                # EMAIL DETAILS
-                # ------------------------------------------------
+                if analysis.get(
+                    "availability_request"
+                ):
 
-                with st.expander("View email"):
+                    requested_day = analysis.get(
+                        "requested_day"
+                    )
+
+                    requested_start = analysis.get(
+                        "requested_start"
+                    )
+
+                    requested_end = analysis.get(
+                        "requested_end"
+                    )
+
+                    if requested_day:
+
+                        st.info(
+                            "📅 Availability requested: "
+                            f"{requested_day}"
+                            + (
+                                f" {requested_start}–"
+                                f"{requested_end}"
+                                if requested_start
+                                and requested_end
+                                else ""
+                            )
+                        )
+
+                with st.expander(
+                    "View email"
+                ):
+
+                    st.caption(
+                        email.get(
+                            "date",
+                            "Unknown date",
+                        )
+                    )
 
                     st.write(
                         email.get(
@@ -483,67 +844,106 @@ with left:
                         )
                     )
 
-                # ------------------------------------------------
-                # DRAFT REPLY
-                # ------------------------------------------------
+                # ----------------------------------------
+                # DRAFT
+                # ----------------------------------------
 
-                if analysis.get("reply_needed"):
+                if analysis.get(
+                    "reply_needed"
+                ):
 
-                    if st.button(
-                        "✍️ Draft reply",
-                        key=f"draft_{email['id']}",
-                    ):
+                    existing_draft = email.get(
+                        "draft_reply"
+                    )
 
-                        if not claude_connected:
+                    if existing_draft:
 
-                            st.error(
-                                "Claude is not connected."
+                        st.write(
+                            "**AI draft reply**"
+                        )
+
+                        edited_draft = st.text_area(
+                            "Review and edit before sending",
+                            value=existing_draft,
+                            height=180,
+                            key=f"existing_{email['id']}",
+                        )
+
+                        if st.button(
+                            "💾 Save draft",
+                            key=f"save_{email['id']}",
+                        ):
+
+                            update_draft_reply(
+                                email["id"],
+                                edited_draft,
                             )
 
-                        else:
+                            email[
+                                "draft_reply"
+                            ] = edited_draft
 
-                            with st.spinner(
-                                "Drafting reply..."
-                            ):
+                            st.success(
+                                "Draft saved."
+                            )
 
-                                draft = draft_reply(
-                                    client,
-                                    email,
-                                    None,
+                    else:
+
+                        if st.button(
+                            "✍️ Draft reply",
+                            key=f"draft_{email['id']}",
+                        ):
+
+                            if not claude_connected:
+
+                                st.error(
+                                    "Claude is not connected."
                                 )
 
-                            st.session_state[
-                                f"draft_{email['id']}"
-                            ] = draft
+                            else:
 
-                draft_key = f"draft_{email['id']}"
+                                availability = (
+                                    availability_for_email(
+                                        email,
+                                        free_slots,
+                                    )
+                                )
 
-                if draft_key in st.session_state:
+                                with st.spinner(
+                                    "Claude is drafting a reply..."
+                                ):
 
-                    st.text_area(
-                        "Draft reply",
-                        value=st.session_state[draft_key],
-                        height=180,
-                        key=f"text_{email['id']}",
-                    )
+                                    draft = draft_reply(
+                                        client,
+                                        email,
+                                        availability,
+                                    )
 
-                    st.caption(
-                        "⚠️ Draft only — nothing is sent automatically."
-                    )
+                                email[
+                                    "draft_reply"
+                                ] = draft
+
+                                save_email(
+                                    email
+                                )
+
+                                st.rerun()
 
 
 # ============================================================
-# TODAY'S CALENDAR
+# TODAY
 # ============================================================
 
 with right:
 
-    st.subheader("📅 Today's calendar")
+    st.subheader(
+        "📅 Today"
+    )
 
     if not calendar_connected:
 
         st.error(
-            "Google Calendar is unavailable."
+            "Calendar unavailable."
         )
 
     elif not today_events:
@@ -556,7 +956,9 @@ with right:
 
         for event in today_events:
 
-            with st.container(border=True):
+            with st.container(
+                border=True
+            ):
 
                 st.write(
                     f"**{format_event(event)}**"
@@ -564,96 +966,112 @@ with right:
 
 
 # ============================================================
-# TUTORING AVAILABILITY
+# TUTORING
 # ============================================================
 
 st.divider()
 
-st.subheader("🎓 Tutoring availability")
-
-tutoring_day = today + timedelta(
-    days=(6 - today.weekday()) % 7
+st.subheader(
+    "🎓 Tutoring"
+)
+st.caption(
+    "Available one-hour tutoring slots"
 )
 
-# If today is Sunday, use today.
-if today.weekday() == 6:
+if tutoring_day:
 
-    tutoring_day = today
-
-
-tutoring_start = tutoring_day.replace(
-    hour=12,
-    minute=0,
-    second=0,
-    microsecond=0,
-)
-
-tutoring_end = tutoring_day.replace(
-    hour=18,
-    minute=0,
-    second=0,
-    microsecond=0,
-)
-
-if calendar_connected:
-
-    try:
-
-        free_slots = find_free_slots(
-            calendar_service,
-            tutoring_start,
-            tutoring_end,
-            lesson_minutes=60,
+    st.caption(
+        tutoring_day.strftime(
+            "%A %d %B %Y"
         )
+        + " • 12:00–18:00"
+    )
 
-        if free_slots:
+if not calendar_connected:
 
-            st.write(
-                f"**{tutoring_day.strftime('%A %d %B')}**"
-            )
+    st.info(
+        "Connect Google Calendar to calculate availability."
+    )
 
-            cols = st.columns(
-                min(len(free_slots), 6)
-            )
+elif not free_slots:
 
-            for index, (slot_start, slot_end) in enumerate(
-                free_slots
-            ):
-
-                with cols[index % len(cols)]:
-
-                    st.info(
-                        f"{slot_start.strftime('%H:%M')}"
-                        f"–"
-                        f"{slot_end.strftime('%H:%M')}"
-                    )
-
-        else:
-
-            st.info(
-                "No one-hour tutoring slots are currently available."
-            )
-
-    except Exception as e:
-
-        st.error(
-            f"Could not calculate tutoring availability: {e}"
-        )
+    st.warning(
+        "No one-hour tutoring slots are available."
+    )
 
 else:
 
-    st.info(
-        "Connect Google Calendar to calculate tutoring availability."
+    availability_cols = st.columns(
+        min(
+            len(free_slots),
+            6
+        )
     )
+
+    for index, (
+        slot_start,
+        slot_end,
+    ) in enumerate(free_slots):
+
+        with availability_cols[
+            index % len(availability_cols)
+        ]:
+
+            st.info(
+                f"**{slot_start.strftime('%H:%M')}"
+                f"–"
+                f"{slot_end.strftime('%H:%M')}**"
+            )
 
 
 # ============================================================
-# RECENT EMAILS
+# UPCOMING CALENDAR
 # ============================================================
 
 st.divider()
 
-st.subheader("📧 Recent emails")
+st.subheader(
+    "🗓️ Next 7 days"
+)
+
+if not week_events:
+
+    st.caption(
+        "No upcoming calendar events."
+    )
+
+else:
+
+    current_date = None
+
+    for event in week_events:
+
+        event_date = format_event_date(
+            event
+        )
+
+        if event_date != current_date:
+
+            st.markdown(
+                f"**{event_date}**"
+            )
+
+            current_date = event_date
+
+        st.write(
+            f"• {format_event(event)}"
+        )
+
+
+# ============================================================
+# INBOX
+# ============================================================
+
+st.divider()
+
+st.subheader(
+    "📧 Inbox"
+)
 
 if not emails:
 
@@ -663,20 +1081,137 @@ if not emails:
 
 else:
 
-    for email in emails:
+    filter_col1, filter_col2 = st.columns(
+        [1, 2]
+    )
+
+    with filter_col1:
+
+        filter_option = st.selectbox(
+            "Filter",
+            [
+                "All emails",
+                "Needs attention",
+                "Replies needed",
+                "High priority",
+                "Tutoring",
+            ],
+        )
+
+    with filter_col2:
+
+        search = st.text_input(
+            "Search",
+            placeholder=(
+                "Search sender or subject..."
+            ),
+        )
+
+
+    filtered_emails = emails
+
+
+    if filter_option == "Needs attention":
+
+        filtered_emails = [
+            email
+            for email in filtered_emails
+            if email.get(
+                "analysis",
+                {}
+            ).get(
+                "action_required",
+                False,
+            )
+        ]
+
+
+    elif filter_option == "Replies needed":
+
+        filtered_emails = [
+            email
+            for email in filtered_emails
+            if email.get(
+                "analysis",
+                {}
+            ).get(
+                "reply_needed",
+                False,
+            )
+        ]
+
+
+    elif filter_option == "High priority":
+
+        filtered_emails = [
+            email
+            for email in filtered_emails
+            if email.get(
+                "analysis",
+                {}
+            ).get(
+                "priority"
+            ) == "High"
+        ]
+
+
+    elif filter_option == "Tutoring":
+
+        filtered_emails = [
+            email
+            for email in filtered_emails
+            if email.get(
+                "analysis",
+                {}
+            ).get(
+                "category"
+            ) == "Tutoring"
+        ]
+
+
+    if search:
+
+        search_lower = search.lower()
+
+        filtered_emails = [
+            email
+            for email in filtered_emails
+            if (
+                search_lower
+                in email.get(
+                    "subject",
+                    ""
+                ).lower()
+                or
+                search_lower
+                in email.get(
+                    "sender",
+                    ""
+                ).lower()
+            )
+        ]
+
+
+    st.caption(
+        f"Showing {len(filtered_emails)} "
+        f"of {len(emails)} emails"
+    )
+
+
+    for email in filtered_emails:
 
         analysis = email.get(
             "analysis",
-            {},
-        )
-
-        category = analysis.get(
-            "category",
-            "Unknown",
+            {}
         )
 
         priority = analysis.get(
             "priority",
+            "Unknown",
+        )
+
+        category = analysis.get(
+            "category",
             "Unknown",
         )
 
@@ -685,19 +1220,17 @@ else:
             "No subject",
         )
 
-        sender = email.get(
-            "sender",
-            "Unknown sender",
+        icon = priority_icon(
+            priority
         )
 
-        icon = priority_icon(priority)
-
         with st.expander(
-            f"{icon} {category}  |  {subject}"
+            f"{icon} {category} | {subject}"
         ):
 
             st.write(
-                f"**From:** {sender}"
+                f"**From:** "
+                f"{email.get('sender', 'Unknown')}"
             )
 
             st.write(
@@ -708,7 +1241,7 @@ else:
             st.divider()
 
             st.write(
-                "**Claude's summary:**"
+                "**Claude's summary**"
             )
 
             st.write(
@@ -718,12 +1251,12 @@ else:
                 )
             )
 
-            col_a, col_b = st.columns(2)
+            col_a, col_b, col_c = st.columns(3)
 
             with col_a:
 
                 st.write(
-                    "**Action required:** "
+                    "**Action:** "
                     + (
                         "Yes"
                         if analysis.get(
@@ -736,7 +1269,7 @@ else:
             with col_b:
 
                 st.write(
-                    "**Reply needed:** "
+                    "**Reply:** "
                     + (
                         "Yes"
                         if analysis.get(
@@ -746,7 +1279,49 @@ else:
                     )
                 )
 
-            with st.expander("Email body"):
+            with col_c:
+
+                st.write(
+                    "**Priority:** "
+                    f"{priority}"
+                )
+
+            if email.get(
+                "draft_reply"
+            ):
+
+                st.divider()
+
+                st.write(
+                    "**Saved draft**"
+                )
+
+                edited_draft = st.text_area(
+                    "Draft",
+                    value=email[
+                        "draft_reply"
+                    ],
+                    height=160,
+                    key=f"inbox_draft_{email['id']}",
+                )
+
+                if st.button(
+                    "💾 Save changes",
+                    key=f"inbox_save_{email['id']}",
+                ):
+
+                    update_draft_reply(
+                        email["id"],
+                        edited_draft,
+                    )
+
+                    st.success(
+                        "Draft saved."
+                    )
+
+            with st.expander(
+                "Original email"
+            ):
 
                 st.write(
                     email.get(
@@ -763,5 +1338,5 @@ else:
 st.divider()
 
 st.caption(
-    "Ben's Personal Assistant • Local development build"
+    "Ben's Personal Assistant • v0.5"
 )

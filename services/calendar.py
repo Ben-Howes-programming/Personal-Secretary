@@ -61,7 +61,10 @@ def get_calendar_for_period(
     start_dt,
     end_dt
 ):
-    # Make sure datetimes are timezone-aware.
+    """
+    Return all calendar events overlapping a period.
+    """
+
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(
             tzinfo=UK_TIMEZONE
@@ -83,12 +86,95 @@ def get_calendar_for_period(
     return events_result.get("items", [])
 
 
+def event_to_datetime(event):
+    """
+    Convert a Google Calendar event start/end value
+    into a timezone-aware datetime.
+    """
+
+    start = event["start"].get(
+        "dateTime",
+        event["start"].get("date")
+    )
+
+    end = event["end"].get(
+        "dateTime",
+        event["end"].get("date")
+    )
+
+    if not start or not end:
+        return None, None
+
+    if "T" in start:
+
+        event_start = datetime.fromisoformat(
+            start
+        )
+
+        event_end = datetime.fromisoformat(
+            end
+        )
+
+        if event_start.tzinfo is None:
+            event_start = event_start.replace(
+                tzinfo=UK_TIMEZONE
+            )
+
+        if event_end.tzinfo is None:
+            event_end = event_end.replace(
+                tzinfo=UK_TIMEZONE
+            )
+
+    else:
+        # Google all-day events use an exclusive
+        # end date. Treat them as UK-local dates.
+        event_start = datetime.fromisoformat(
+            start
+        ).replace(
+            tzinfo=UK_TIMEZONE
+        )
+
+        event_end = datetime.fromisoformat(
+            end
+        ).replace(
+            tzinfo=UK_TIMEZONE
+        )
+
+    return event_start, event_end
+
+
 def find_free_slots(
     calendar_service,
     start_dt,
     end_dt,
     lesson_minutes=60
 ):
+    """
+    Find individual available lesson slots.
+
+    For example, if 12:00–18:00 is completely free
+    and lesson_minutes is 60, return:
+
+        12:00–13:00
+        13:00–14:00
+        14:00–15:00
+        15:00–16:00
+        16:00–17:00
+        17:00–18:00
+
+    Calendar events are treated as unavailable time.
+    """
+
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(
+            tzinfo=UK_TIMEZONE
+        )
+
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(
+            tzinfo=UK_TIMEZONE
+        )
+
     events = get_calendar_for_period(
         calendar_service,
         start_dt,
@@ -99,93 +185,122 @@ def find_free_slots(
 
     for event in events:
 
-        start = event["start"].get(
-            "dateTime",
-            event["start"].get("date")
+        event_start, event_end = (
+            event_to_datetime(event)
         )
 
-        end = event["end"].get(
-            "dateTime",
-            event["end"].get("date")
-        )
-
-        if not start or not end:
+        if event_start is None:
             continue
 
-        if "T" in start:
+        # Ignore events completely outside our
+        # requested period.
+        if event_end <= start_dt:
+            continue
 
-            event_start = datetime.fromisoformat(
-                start
-            )
+        if event_start >= end_dt:
+            continue
 
-            event_end = datetime.fromisoformat(
-                end
-            )
+        # Clip events to our requested period.
+        event_start = max(
+            event_start,
+            start_dt
+        )
 
-        else:
-
-            event_start = datetime.fromisoformat(
-                start + "T00:00:00"
-            ).replace(
-                tzinfo=UK_TIMEZONE
-            )
-
-            event_end = datetime.fromisoformat(
-                end + "T00:00:00"
-            ).replace(
-                tzinfo=UK_TIMEZONE
-            )
+        event_end = min(
+            event_end,
+            end_dt
+        )
 
         busy_periods.append(
             (event_start, event_end)
         )
 
-    busy_periods.sort()
+    # Sort events chronologically.
+    busy_periods.sort(
+        key=lambda period: period[0]
+    )
 
-    free_slots = []
-
-    current = start_dt
-
-    if current.tzinfo is None:
-        current = current.replace(
-            tzinfo=UK_TIMEZONE
-        )
-
-    if end_dt.tzinfo is None:
-        end_dt = end_dt.replace(
-            tzinfo=UK_TIMEZONE
-        )
+    # Merge overlapping events.
+    merged_busy = []
 
     for busy_start, busy_end in busy_periods:
 
+        if not merged_busy:
+
+            merged_busy.append(
+                [busy_start, busy_end]
+            )
+
+            continue
+
+        previous_start, previous_end = (
+            merged_busy[-1]
+        )
+
+        if busy_start <= previous_end:
+
+            merged_busy[-1][1] = max(
+                previous_end,
+                busy_end
+            )
+
+        else:
+
+            merged_busy.append(
+                [busy_start, busy_end]
+            )
+
+    # Work out the free ranges.
+    free_ranges = []
+
+    current = start_dt
+
+    for busy_start, busy_end in merged_busy:
+
         if busy_start > current:
 
-            gap_minutes = (
-                busy_start - current
-            ).total_seconds() / 60
-
-            if gap_minutes >= lesson_minutes:
-
-                free_slots.append(
-                    (current, busy_start)
-                )
+            free_ranges.append(
+                (current, busy_start)
+            )
 
         if busy_end > current:
+
             current = busy_end
 
     if current < end_dt:
 
-        gap_minutes = (
-            end_dt - current
-        ).total_seconds() / 60
+        free_ranges.append(
+            (current, end_dt)
+        )
 
-        if gap_minutes >= lesson_minutes:
+    # Turn free ranges into actual lesson slots.
+    lesson_delta = timedelta(
+        minutes=lesson_minutes
+    )
 
-            free_slots.append(
-                (current, end_dt)
+    lesson_slots = []
+
+    for free_start, free_end in free_ranges:
+
+        slot_start = free_start
+
+        while (
+            slot_start + lesson_delta
+            <= free_end
+        ):
+
+            slot_end = (
+                slot_start
+                + lesson_delta
             )
 
-    return free_slots
+            lesson_slots.append(
+                (slot_start, slot_end)
+            )
+
+            slot_start = slot_end
+
+    return lesson_slots
 
 
 def format_calendar_events(events):
