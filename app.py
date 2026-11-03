@@ -193,7 +193,9 @@ def load_emails(gmail, client):
                 # old analysis.
                 email["draft_reply"] = None
 
+
                 save_email(email)
+                st.cache_data.clear()
 
         else:
 
@@ -214,6 +216,7 @@ def load_emails(gmail, client):
                 email["analysis"] = analysis
 
                 save_email(email)
+                st.cache_data.clear()
 
             else:
 
@@ -377,6 +380,10 @@ now = datetime.now(
     LONDON
 )
 
+@st.cache_data(ttl=300, show_spinner="Checking Gmail...")
+def load_emails_cached(_gmail, _client):
+    # The leading underscores tell Streamlit not to hash these objects
+    return load_emails(_gmail, _client)
 
 # ============================================================
 # LOAD EMAILS
@@ -388,10 +395,7 @@ if gmail_connected:
 
     try:
 
-        emails = load_emails(
-            gmail,
-            client,
-        )
+        emails = load_emails_cached(gmail, client)
 
     except Exception as e:
 
@@ -501,6 +505,7 @@ with st.sidebar:
         use_container_width=True,
     ):
         st.cache_resource.clear()
+        st.cache_data.clear()
         st.rerun()
 
     st.divider()
@@ -1068,6 +1073,7 @@ with left:
                                 email["id"],
                                 edited_draft,
                             )
+                            st.cache_data.clear()
 
                             email[
                                 "draft_reply"
@@ -1111,6 +1117,9 @@ with left:
                                 save_email(
                                     email
                                 )
+                                st.cache_data.clear()
+
+                                st.cache_data.clear()
 
                                 st.rerun()
 
@@ -1499,6 +1508,7 @@ else:
                         email["id"],
                         edited_draft,
                     )
+                    st.cache_data.clear()
 
                     st.success(
                         "Draft saved."
