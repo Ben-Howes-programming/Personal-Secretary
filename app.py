@@ -14,12 +14,14 @@ from services.calendar import (
     get_calendar_service,
     get_calendar_for_period,
     find_free_slots,
+    get_requested_free_slots,
 )
 
 from ai.claude import (
     create_client,
     analyse_email,
     draft_reply,
+    chat_with_assistant,
 )
 
 from database.database import (
@@ -278,33 +280,13 @@ def calculate_tutoring_availability(
     return free_slots, tutoring_day
 
 
-def availability_for_email(
-    email,
-    free_slots,
-):
-    analysis = email.get(
-        "analysis",
-        {}
-    )
+def availability_for_email(email, calendar_service):
+    analysis = email.get("analysis", {})
 
-    if not analysis.get(
-        "availability_request",
-        False,
-    ):
+    if not analysis.get("availability_request", False):
         return None
 
-    requested_day = analysis.get(
-        "requested_day"
-    )
-
-    # At the moment our tutoring availability
-    # calculation is for Sunday.
-    #
-    # If Claude identifies Sunday, use it.
-    if requested_day == "Sunday":
-        return free_slots
-
-    return None
+    return get_requested_free_slots(calendar_service, analysis)
 
 
 # ============================================================
@@ -318,52 +300,6 @@ st.title(
 st.caption(
     "Your personal command centre"
 )
-
-
-# ============================================================
-# SIDEBAR
-# ============================================================
-
-with st.sidebar:
-
-    st.header("Assistant")
-
-    if st.button(
-        "🔄 Refresh",
-        use_container_width=True,
-    ):
-
-        st.cache_resource.clear()
-
-        st.rerun()
-
-    st.divider()
-
-    st.subheader(
-        "Connected services"
-    )
-
-    st.write("📧 Gmail")
-    st.write("📅 Google Calendar")
-    st.write("🧠 Claude")
-
-    st.divider()
-
-    st.subheader(
-        "Assistant roadmap"
-    )
-
-    st.write("✓ Email triage")
-    st.write("✓ Calendar awareness")
-    st.write("✓ Tutoring availability")
-    st.write("✓ AI reply drafts")
-
-    st.write("⬜ Calendar management")
-    st.write("⬜ Task management")
-    st.write("⬜ Multiple calendars")
-    st.write("⬜ Tutoring workflow")
-    st.write("⬜ Finance & investments")
-    st.write("⬜ Natural-language command centre")
 
 
 # ============================================================
@@ -534,6 +470,260 @@ if calendar_connected:
         free_slots = []
         tutoring_day = None
 
+# ============================================================
+# SIDEBAR
+# ============================================================
+
+with st.sidebar:
+
+    st.header("🤖 Ben's Assistant")
+
+    page = st.radio(
+        "Navigate",
+        [
+            "🏠 Dashboard",
+            "💬 Assistant",
+            "📧 Email",
+            "🎓 Tutoring",
+            "📅 Calendar",
+            "💰 Finance",
+            "❤️ Health",
+            "🎓 University",
+            "⚙️ Settings",
+        ],
+        label_visibility="collapsed",
+    )
+
+    st.divider()
+
+    if st.button(
+        "🔄 Refresh",
+        use_container_width=True,
+    ):
+        st.cache_resource.clear()
+        st.rerun()
+
+    st.divider()
+
+    st.subheader("Connected services")
+
+    if gmail_connected:
+        st.write("🟢 Gmail")
+    else:
+        st.write("🔴 Gmail")
+
+    if calendar_connected:
+        st.write("🟢 Google Calendar")
+    else:
+        st.write("🔴 Google Calendar")
+
+    if claude_connected:
+        st.write("🟢 Claude")
+    else:
+        st.write("🔴 Claude")
+
+
+# ============================================================
+# NON-DASHBOARD PAGES
+# ============================================================
+
+if page != "🏠 Dashboard":
+
+    st.title(page)
+
+    if page == "💬 Assistant":
+
+        st.caption(
+            "Ask me about your emails, calendar and tutoring."
+        )
+
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = []
+
+        for message in st.session_state.chat_history:
+
+            with st.chat_message(message["role"]):
+                st.write(message["content"])
+
+        user_message = st.chat_input(
+            "Ask your assistant..."
+        )
+
+        if user_message:
+
+            st.session_state.chat_history.append(
+                {
+                    "role": "user",
+                    "content": user_message,
+                }
+            )
+
+            with st.chat_message("user"):
+                st.write(user_message)
+
+            if not claude_connected:
+
+                response = "Claude is not connected."
+
+            else:
+
+                context_parts = []
+
+                # Emails requiring attention
+                attention = [
+                    email
+                    for email in emails
+                    if email.get(
+                        "analysis",
+                        {}
+                    ).get(
+                        "action_required",
+                        False,
+                    )
+                ]
+
+                if attention:
+
+                    context_parts.append(
+                        "EMAILS REQUIRING ATTENTION:"
+                    )
+
+                    for email in attention:
+
+                        analysis = email.get(
+                            "analysis",
+                            {}
+                        )
+
+                        context_parts.append(
+                            f"- {email.get('subject', 'No subject')} "
+                            f"| From: {sender_name(email.get('sender'))} "
+                            f"| Priority: {analysis.get('priority', 'Unknown')} "
+                            f"| Summary: {analysis.get('summary', 'No summary')}"
+                        )
+
+                else:
+
+                    context_parts.append(
+                        "EMAILS REQUIRING ATTENTION:\nNone."
+                    )
+
+                # Calendar
+                context_parts.append(
+                    "\nCALENDAR — NEXT 7 DAYS:"
+                )
+
+                if week_events:
+
+                    for event in week_events:
+
+                        context_parts.append(
+                            f"- {format_event_date(event)}: "
+                            f"{format_event(event)}"
+                        )
+
+                else:
+
+                    context_parts.append(
+                        "No events scheduled."
+                    )
+
+                # Tutoring
+                if tutoring_day:
+
+                    context_parts.append(
+                        "\nTUTORING AVAILABILITY:"
+                    )
+
+                    context_parts.append(
+                        tutoring_day.strftime(
+                            "%A %d %B %Y"
+                        )
+                    )
+
+                    if free_slots:
+
+                        for start, end in free_slots:
+
+                            context_parts.append(
+                                f"- "
+                                f"{start.strftime('%H:%M')}–"
+                                f"{end.strftime('%H:%M')}"
+                            )
+
+                    else:
+
+                        context_parts.append(
+                            "No one-hour slots available."
+                        )
+
+                context = "\n".join(
+                    context_parts
+                )
+
+                with st.chat_message("assistant"):
+
+                    with st.spinner("Thinking..."):
+
+                        response = chat_with_assistant(
+                            client,
+                            user_message,
+                            context,
+                        )
+
+                    st.write(response)
+
+            st.session_state.chat_history.append(
+                {
+                    "role": "assistant",
+                    "content": response,
+                }
+            )
+
+    elif page == "📧 Email":
+
+        st.info(
+            "Email management will move here."
+        )
+
+    elif page == "🎓 Tutoring":
+
+        st.info(
+            "Tutoring management will move here."
+        )
+
+    elif page == "📅 Calendar":
+
+        st.info(
+            "Calendar management will move here."
+        )
+
+    elif page == "💰 Finance":
+
+        st.info(
+            "Finance and investment tracking will be added here."
+        )
+
+    elif page == "❤️ Health":
+
+        st.info(
+            "Health, gym, Apple Health and Bevel integration "
+            "will be added here."
+        )
+
+    elif page == "🎓 University":
+
+        st.info(
+            "University tools will be added here."
+        )
+
+    elif page == "⚙️ Settings":
+
+        st.info(
+            "Assistant settings will be added here."
+        )
+
+    st.stop()
 
 # ============================================================
 # EMAIL METRICS
@@ -902,12 +1092,7 @@ with left:
 
                             else:
 
-                                availability = (
-                                    availability_for_email(
-                                        email,
-                                        free_slots,
-                                    )
-                                )
+                                availability = availability_for_email(email, calendar_service)
 
                                 with st.spinner(
                                     "Claude is drafting a reply..."

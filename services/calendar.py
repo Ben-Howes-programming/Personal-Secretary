@@ -9,6 +9,62 @@ UK_TIMEZONE = ZoneInfo("Europe/London")
 def get_calendar_service():
     return build_service("calendar", "v3")
 
+DAY_NAMES = [
+    "Monday", "Tuesday", "Wednesday", "Thursday",
+    "Friday", "Saturday", "Sunday",
+]
+
+
+def get_next_occurrence(day_name):
+    """Next date for a weekday name. Today's weekday means a week from today."""
+    if day_name not in DAY_NAMES:
+        return None
+
+    now = datetime.now(UK_TIMEZONE)
+    days_ahead = (DAY_NAMES.index(day_name) - now.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+
+    return now + timedelta(days=days_ahead)
+
+
+def parse_time(text):
+    """'12:00' -> (12, 0). Returns None if the text is missing or invalid."""
+    try:
+        hour, minute = int(text[:2]), int(text[3:5])
+    except (TypeError, ValueError):
+        return None
+
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+
+    return hour, minute
+
+
+def get_requested_free_slots(calendar_service, analysis, lesson_minutes=60):
+    """Free lesson slots for the day and window Claude extracted from an email.
+
+    Returns None if the day or times could not be read.
+    """
+    day = analysis.get("requested_day")
+    start_time = parse_time(analysis.get("requested_start"))
+    end_time = parse_time(analysis.get("requested_end"))
+    date = get_next_occurrence(day) if day else None
+
+    if not (date and start_time and end_time):
+        return None
+
+    start_dt = date.replace(
+        hour=start_time[0], minute=start_time[1], second=0, microsecond=0
+    )
+    end_dt = date.replace(
+        hour=end_time[0], minute=end_time[1], second=0, microsecond=0
+    )
+
+    if end_dt <= start_dt:
+        return None
+
+    return find_free_slots(calendar_service, start_dt, end_dt, lesson_minutes)
 
 def get_upcoming_events(calendar_service, max_results=10):
     now = datetime.now(UK_TIMEZONE)
