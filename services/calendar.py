@@ -1,45 +1,13 @@
-import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
-
-
-SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/calendar.readonly"
-]
+from services.google_auth import build_service
 
 UK_TIMEZONE = ZoneInfo("Europe/London")
 
 
 def get_calendar_service():
-    credentials = None
-
-    if os.path.exists("token.json"):
-        credentials = Credentials.from_authorized_user_file(
-            "token.json",
-            SCOPES
-        )
-
-    if not credentials or not credentials.valid:
-        flow = InstalledAppFlow.from_client_secrets_file(
-            "credentials.json",
-            SCOPES
-        )
-
-        credentials = flow.run_local_server(port=0)
-
-        with open("token.json", "w") as token:
-            token.write(credentials.to_json())
-
-    return build(
-        "calendar",
-        "v3",
-        credentials=credentials
-    )
+    return build_service("calendar", "v3")
 
 
 def get_upcoming_events(calendar_service, max_results=10):
