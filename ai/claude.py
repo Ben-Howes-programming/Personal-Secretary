@@ -1,7 +1,7 @@
 import json
 
 from anthropic import Anthropic
-
+import config
 
 def create_client(api_key):
     return Anthropic(api_key=api_key)
@@ -133,8 +133,8 @@ Return only the JSON object.
 """
 
     message = client.messages.create(
-        model="claude-sonnet-5",
-        max_tokens=400,
+        model=config.CLAUDE_MODEL,
+        max_tokens=600,
         messages=[
             {
                 "role": "user",
@@ -211,7 +211,7 @@ Ben
 """
 
     message = client.messages.create(
-        model="claude-sonnet-5",
+        model=config.CLAUDE_MODEL,
         max_tokens=500,
         messages=[
             {
@@ -226,3 +226,81 @@ Ben
             return block.text.strip()
 
     return "[Claude returned no draft]"
+
+def chat_with_assistant(client, user_message, context):
+    prompt = f"""
+You are Ben's personal AI assistant.
+
+Answer Ben's question using the information available below.
+
+Be concise, useful and honest.
+
+Do not invent information.
+
+If the available information does not answer the question,
+say that you do not have enough information.
+
+CURRENT INFORMATION
+
+{context}
+
+BEN'S QUESTION
+
+{user_message}
+
+Return only your natural-language answer.
+"""
+
+    message = client.messages.create(
+        model=config.CLAUDE_MODEL,
+        max_tokens=600,
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    )
+
+    for block in message.content:
+
+        if block.type == "text":
+            return block.text
+
+    return "Claude returned no response."
+
+def chat_with_assistant(client, user_message, context):
+    """
+    Answer a question using the dashboard data as context.
+
+    client       : the Anthropic client from create_client()
+    user_message : what Ben typed in the Assistant page
+    context      : plain text built in app.py (emails, calendar, tutoring slots)
+    """
+    # The system prompt carries the rules and the live data.
+    system_prompt = f"""
+You are Ben's personal secretary. Answer questions about his emails,
+calendar and tutoring availability using ONLY the information below.
+
+Rules:
+- Be concise and direct.
+- If the information below does not answer the question, say so.
+- Do not invent events, emails, times or availability.
+- You can only read information. You cannot send emails or change the calendar.
+
+INFORMATION
+{context}
+"""
+
+    message = client.messages.create(
+        model=config.CLAUDE_MODEL,
+        max_tokens=600,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_message}],
+    )
+
+    for block in message.content:
+        if block.type == "text":
+            return block.text.strip()
+
+    return "Claude returned no response."
