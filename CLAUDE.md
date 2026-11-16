@@ -143,7 +143,7 @@ Ids for non-Gmail mail are prefixed `ms:` and `icloud:`.
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests -q            # 34 tests, about 3 seconds, no network
+python -m pytest tests -q            # 35 tests, about 10 seconds, no network
 streamlit run app.py                 # then click through the page you changed
 ```
 

@@ -18,7 +18,7 @@ A window opens (Chrome in app mode if Chrome is installed, otherwise your defaul
 | Always running, starts at login | `bash scripts/install_cassiopeia.sh` once. It also adds a Cassiopeia app to `~/Applications` |
 | Undo that | `bash scripts/uninstall_cassiopeia.sh` |
 | The old dashboard (finance, health, university, inbox pages) | `streamlit run app.py`. Both use the same database |
-| Run the tests | `python -m pytest tests -q` (34 tests, about 3 seconds, no network) |
+| Run the tests | `python -m pytest tests -q` (35 tests, about 10 seconds, no network) |
 
 No new packages are required. Optional: `pip install pypdf` to search inside PDFs, `pip install pywebview` for a native window without Chrome.
 
@@ -64,7 +64,7 @@ HomePod direction (not built): a Siri shortcut on the HomePod can call Cassiopei
 
 ## 5. Honest status
 
-Tested here (Linux, Python 3.13, headless Chrome): all 34 tests, every page rendered and screenshotted, server security checks, sandbox runs, backtest maths.
+Tested on Linux (Python 3.13, headless Chrome): the 34 logic tests, every page rendered and screenshotted, server security checks, sandbox runs, backtest maths.
 
 Not tested, because it needs your Mac. Expect first-run fixes:
 
