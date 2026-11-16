@@ -19,8 +19,8 @@ from urllib.parse import parse_qs, urlparse
 
 import config
 from ai import claude, voice
-from cassiopeia import (brain, briefing, events, lab, notify, protocols, sandbox, scheduler, selfupdate, store,
-                        vault, weather)
+from cassiopeia import (brain, briefing, events, lab, notify, pages, protocols, sandbox, scheduler, selfupdate,
+                        store, triggers, vault, weather)
 from database import database as db
 from database import tasks, university
 from services import calendar as cal
@@ -49,6 +49,8 @@ def get_state(_q):
         "calendar_errors": errors,
         "tasks": tasks.group_tasks(tasks.list_tasks()),
         "briefings": store.latest_briefings(2),
+        "inbox_waiting": sum(1 for e in db.list_emails(120, include_done=False)
+                             if e["analysis"]["action_required"] or pages.is_urgent(e)),
         "ai": claude.backend_status(),
         "budget": {"spent_gbp": spent, "cap_gbp": config.MONTHLY_API_BUDGET_GBP, "over": claude.over_budget()},
         "jobs": store.jobs(),
@@ -91,6 +93,9 @@ GET = {
     "/api/lab": lambda q: lab.report(),
     "/api/sims": lambda q: sandbox.recent(),
     "/api/updates": lambda q: selfupdate.recent(),
+    "/api/calendar": lambda q: pages.calendar(q.get("start"), q.get("days", 7)),
+    "/api/inbox": lambda q: pages.inbox_list(q.get("show", "open")),
+    "/api/triggers": lambda q: triggers.status(),
 }
 
 
@@ -168,6 +173,15 @@ POST = {
     "/api/updates/propose": guarded(lambda b: selfupdate.propose(b.get("instruction"))),
     "/api/updates/approve": guarded(lambda b: selfupdate.approve(int(b["id"]))),
     "/api/updates/reject": guarded(lambda b: selfupdate.reject(int(b["id"]))),
+    "/api/calendar/free": guarded(lambda b: pages.free_time(b.get("day"), b.get("start", "09:00"), b.get("end", "18:00"), b.get("minutes", 60))),
+    "/api/inbox/sync": guarded(lambda b: pages.inbox_sync(analyse=bool(b.get("analyse")))),
+    "/api/inbox/analyse": guarded(lambda b: pages.analyse_one(b["id"])),
+    "/api/inbox/draft": guarded(lambda b: pages.draft_reply(b["id"])),
+    "/api/inbox/save-draft": guarded(lambda b: pages.save_draft(b["id"], b.get("text", ""), bool(b.get("to_gmail")))),
+    "/api/inbox/discard-draft": guarded(lambda b: pages.discard_draft(b["id"])),
+    "/api/inbox/done": guarded(lambda b: pages.set_done(b["id"], bool(b.get("done", True)))),
+    "/api/triggers/set": guarded(lambda b: triggers.set_enabled(b.get("kind"), b.get("on")) or triggers.status()),
+    "/api/triggers/check": lambda b, q, r: {"sent": triggers.check()},
     "/api/test-message": post_test_message,
     "/api/voice/transcribe": post_transcribe,
     "/api/speak": lambda b, q, r: {"ok": voice.speak(b.get("text", ""))},

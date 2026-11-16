@@ -205,6 +205,7 @@ MONTHLY_API_BUDGET_GBP = float(os.environ.get("MONTHLY_API_BUDGET_GBP", "10"))
 MORNING_BRIEFING_AT = os.environ.get("MORNING_BRIEFING_AT", "07:30")
 EVENING_SUMMARY_AT = os.environ.get("EVENING_SUMMARY_AT", "21:30")
 OVERNIGHT_LAB_AT = "02:15"                 # backtests and the paper account update while you sleep
+QUIET_HOURS = (BEDTIME_TARGET, "07:00")     # no unprompted texts or notifications between these times
 
 WEATHER_PLACE = ("Bath", 51.381, -2.359)   # name, latitude, longitude
 

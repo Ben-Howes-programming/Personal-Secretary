@@ -27,6 +27,12 @@
 <main>
   <section id="today" class="view">
     <h1 id="greeting"></h1>
+    <div class="tabs" id="today-tabs">
+      <button data-tab="overview" aria-pressed="true">Overview</button>
+      <button data-tab="calendar" aria-pressed="false">Calendar</button>
+      <button data-tab="inbox" aria-pressed="false">Inbox<span id="inbox-count"></span></button>
+    </div>
+    <div id="tab-overview" class="tab">
     <div class="split">
       <div>
         <div class="panel">
@@ -51,6 +57,49 @@
         <div class="panel"><h2>Headlines</h2><div id="headlines" class="headlines"></div></div>
         <div class="panel" id="activity-panel" hidden><h2>Screen time today</h2><div id="activity"></div></div>
       </aside>
+    </div>
+    </div>
+
+    <div id="tab-calendar" class="tab" hidden>
+      <div class="panel">
+        <div class="panel-head"><h2 id="cal-title">Week</h2>
+          <span><button class="quiet" id="cal-prev">Earlier</button> <button class="quiet" id="cal-now">This week</button> <button class="quiet" id="cal-next">Later</button></span></div>
+        <div id="cal-errors"></div>
+        <div class="week" id="week"></div>
+      </div>
+      <div class="split even">
+        <div class="panel"><h2>Plan an event</h2>
+          <form id="plan-form" class="stack">
+            <input name="title" placeholder="What is it?" required>
+            <label>Starts <input name="start" type="datetime-local" required></label>
+            <label>Ends <input name="end" type="datetime-local"></label>
+            <input name="notes" placeholder="Notes (optional)">
+            <button>Plan event</button>
+          </form>
+          <p class="hint">Saved in Cassiopeia only. Your Google Calendar is not changed.</p></div>
+        <div class="panel"><h2>Find free time</h2>
+          <form id="free-form" class="stack">
+            <label>Day <input name="day" type="date" required></label>
+            <label>Between <input name="start" type="time" value="09:00" required> and <input name="end" type="time" value="18:00" required></label>
+            <label>Slot length <select name="minutes"><option>30</option><option>45</option><option selected>60</option><option>90</option><option>120</option></select> minutes</label>
+            <button>Find gaps</button>
+          </form>
+          <div id="free-result"></div></div>
+      </div>
+    </div>
+
+    <div id="tab-inbox" class="tab" hidden>
+      <div class="panel">
+        <div class="panel-head"><h2>Inbox</h2><button class="quiet" id="inbox-sync">Check for new mail</button></div>
+        <p class="hint" id="inbox-note"></p>
+        <div class="agents" id="inbox-filter">
+          <button type="button" data-filter="action" aria-pressed="true">Needs action</button>
+          <button type="button" data-filter="open" aria-pressed="false">All open</button>
+          <button type="button" data-filter="done" aria-pressed="false">Done</button>
+        </div>
+        <div id="inbox-pending"></div>
+        <div id="inbox-list"></div>
+      </div>
     </div>
   </section>
 
@@ -99,6 +148,8 @@
       <div>
         <div class="panel"><h2>Protocols</h2><div id="protocols"></div><div id="protocol-log" class="hint"></div></div>
         <div class="panel"><h2>Messages to you</h2><div id="channels"></div><div id="outbox"></div></div>
+        <div class="panel"><div class="panel-head"><h2>Tell me without being asked</h2><button class="quiet" id="trigger-check">Check now</button></div>
+          <div id="triggers"></div></div>
         <div class="panel"><h2>What I remember</h2>
           <form id="memory-form" class="inline"><input name="text" placeholder="Tell me something to remember" required><button>Remember</button></form>
           <div id="memories"></div></div>

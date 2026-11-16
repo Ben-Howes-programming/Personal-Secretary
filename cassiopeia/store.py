@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS cass_updates (
 CREATE TABLE IF NOT EXISTS cass_jobs (
     name TEXT PRIMARY KEY, last_run_ts REAL, last_status TEXT, last_detail TEXT
 );
+CREATE TABLE IF NOT EXISTS cass_trigger_log (
+    key TEXT PRIMARY KEY, kind TEXT, message TEXT, fired_ts REAL
+);
 CREATE TABLE IF NOT EXISTS cass_activity (
     day TEXT, app TEXT, minutes INTEGER DEFAULT 0, PRIMARY KEY (day, app)
 );

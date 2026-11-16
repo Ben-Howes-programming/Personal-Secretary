@@ -101,6 +101,41 @@ td.num, th.num { text-align: right; } .up { color: var(--ok); } .down { color: v
 .mic[aria-pressed="true"] { background: var(--bad); color: #1a0705; border-color: var(--bad); }
 #talk .check, #talk .hint { display: block; max-width: 780px; margin-left: auto; margin-right: auto; }
 
+/* Tabs inside Today */
+.tabs { display: flex; gap: 1.6rem; border-bottom: 1px solid var(--line); margin: -0.4rem 0 1.4rem; }
+.tabs button { background: none; color: var(--dim); border-radius: 0; padding: 0.5rem 0; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs button[aria-pressed="true"] { color: var(--amber); border-bottom-color: var(--amber); }
+.tabs span { color: var(--amber); margin-left: 0.4rem; font-variant-numeric: tabular-nums; }
+.stack { display: grid; gap: 0.6rem; margin-top: 0.4rem; } .stack label { color: var(--dim); font-size: 0.9rem; }
+.stack button { justify-self: start; }
+
+/* Week grid: one hour is 40px, the day runs 07:00 to 23:00 */
+.week { display: grid; grid-template-columns: 46px repeat(7, minmax(0, 1fr)); font-size: 0.8rem; }
+.week .head { padding: 0.3rem 0.4rem; color: var(--dim); border-bottom: 1px solid var(--line); }
+.week .head strong { display: block; font: 600 1.05rem var(--display); color: var(--vellum); }
+.week .head.now strong { color: var(--amber); }
+.week .allday { min-height: 26px; padding: 2px; border-bottom: 1px solid var(--line); border-left: 1px solid var(--line); }
+.week .gutter { position: relative; height: 640px; }
+.week .gutter span { position: absolute; right: 6px; transform: translateY(-50%); color: var(--dim); }
+.week .col { position: relative; height: 640px; border-left: 1px solid var(--line);
+             background: repeating-linear-gradient(180deg, transparent 0 39px, var(--line) 39px 40px); }
+.week .col.now { background-color: #20285c; }
+.week .ev { position: absolute; overflow: hidden; border-radius: 5px; padding: 2px 5px; line-height: 1.25;
+            background: #2f3a82; border-left: 3px solid var(--caph); color: var(--vellum); }
+.week .ev.short { white-space: nowrap; text-overflow: ellipsis; } .week .ev.short small { display: none; }
+.week .ev.mine { background: #4a3a1c; border-left-color: var(--amber); }
+.week .ev small, .week .chip small { color: var(--dim); display: block; }
+.week .chip { display: block; background: #2f3a82; border-radius: 4px; padding: 1px 5px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.week .nowline { position: absolute; left: 0; right: 0; height: 2px; background: var(--amber); }
+
+/* Inbox */
+.mail summary { display: flex; gap: 0.6rem; align-items: baseline; list-style: none; }
+.mail summary::-webkit-details-marker { display: none; }
+.mail .from { font-weight: 600; white-space: nowrap; } .mail .subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mail .body { white-space: pre-wrap; font: inherit; max-height: 260px; }
+.mail textarea { width: 100%; min-height: 150px; margin: 0.5rem 0; }
+.mail .buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.6rem 0 0.3rem; }
+
 /* Vault and lab */
 .drop { border-style: dashed; text-align: center; } .drop.over { border-color: var(--amber); background: #222a60; }
 .drop .inline { justify-content: center; }

@@ -2,7 +2,8 @@
 scheduler.py
 ============
 Purpose : Runs jobs by the clock while Cassiopeia is open: morning briefing, evening
-          summary, the overnight trading lab, and the optional once-a-minute activity sample.
+          summary, the overnight trading lab, a free mail check every half hour, the triggers in
+          triggers.py every five minutes, and the optional once-a-minute activity sample.
 Location: cassiopeia/scheduler.py
 Used by : cassiopeia/__main__.py
 Design  : A job that was missed because the Mac was asleep still runs when it wakes, as
@@ -16,7 +17,7 @@ import time
 from datetime import datetime, timedelta
 
 import config
-from cassiopeia import briefing, events, lab, store
+from cassiopeia import briefing, events, lab, pages, store, triggers
 from database import database as db
 
 
@@ -74,13 +75,27 @@ def tick(now=None):
             run_job(name, action)
 
 
+def background_mail_check():
+    """Fetch new mail with the free rules only, so the urgent-email trigger has something to look at."""
+    if not triggers.enabled("email") or pages.gmail_service() is None:
+        return "skipped"
+    stats = pages.inbox_sync(analyse=False)
+    return f"{stats['new']} new"
+
+
 def start():
     """Start the background loop. Returns the thread."""
     def loop():
-        last_sample = 0.0
+        last_sample, last_triggers, last_mail = 0.0, 0.0, time.time()
         while True:
             try:
                 tick()
+                if time.time() - last_mail >= config.AUTO_SYNC_MINUTES * 60:
+                    last_mail = time.time()
+                    run_job("mail check", background_mail_check)
+                if time.time() - last_triggers >= 300:          # every five minutes
+                    last_triggers = time.time()
+                    triggers.check()
                 if config.ENABLE_ACTIVITY_TRACKING and time.time() - last_sample >= 60:
                     last_sample = time.time()
                     sample_activity()

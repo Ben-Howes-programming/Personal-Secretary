@@ -88,6 +88,7 @@ async function loadState() {
   }
   $("#tasks").innerHTML = html || `<p class="hint">No open tasks. Add one below, or tell Cassiopeia in Talk.</p>`;
 
+  $("#inbox-count").textContent = state.inbox_waiting || "";
   $("#activity-panel").hidden = !state.activity.length;
   $("#activity").innerHTML = state.activity.map((a) => `<div class="row"><span class="grow">${esc(a.app)}</span><span class="meta">${a.minutes} min</span></div>`).join("");
 }
@@ -267,6 +268,127 @@ $("#memory-form").addEventListener("submit", (e) => { e.preventDefault(); const 
 $("#update-form").addEventListener("submit", (e) => { e.preventDefault(); const f = e.target; busy(f.querySelector("button"), async () => { await api("/api/updates/propose", { instruction: f.instruction.value }); f.reset(); loadControl(); }); });
 loaders.control = loadControl;
 
+
+/* ---------- Tabs inside Today ---------- */
+const tabLoaders = {};
+function showTab(name) {
+  document.querySelectorAll("#today .tab").forEach((tab) => { tab.hidden = tab.id !== `tab-${name}`; });
+  document.querySelectorAll("#today-tabs button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === name));
+  if (tabLoaders[name]) tabLoaders[name]();
+}
+$("#today-tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) showTab(b.dataset.tab); });
+
+/* ---------- Calendar ---------- */
+const DAY_START = 7, DAY_HOURS = 16, HOUR_PX = 40;        // the grid shows 07:00 to 23:00
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const hhmm = (d) => d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+function mondayOf(date) { const d = new Date(date); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; }
+let weekStart = mondayOf(new Date());
+
+function lanes(dayEvents) {            // events that overlap sit side by side
+  const ends = [];
+  for (const ev of dayEvents) {
+    let lane = ends.findIndex((end) => end <= ev.from);
+    if (lane < 0) { lane = ends.length; ends.push(0); }
+    ends[lane] = ev.to; ev.lane = lane;
+  }
+  dayEvents.forEach((ev) => { ev.lanes = ends.length; });
+}
+
+async function loadCalendar() {
+  const data = await api(`/api/calendar?start=${isoDay(weekStart)}&days=7`);
+  const last = new Date(weekStart); last.setDate(last.getDate() + 6);
+  $("#cal-title").textContent = `${weekStart.toLocaleDateString("en-GB", { day: "numeric", month: "long" })} to ${last.toLocaleDateString("en-GB", { day: "numeric", month: "long" })}, ${data.hours_booked} hours booked`;
+  $("#cal-errors").innerHTML = data.errors.map((e) => `<p class="hint">${esc(e)}</p>`).join("");
+  const days = [...Array(7)].map((_, i) => { const d = new Date(weekStart); d.setDate(d.getDate() + i); return { date: d, key: isoDay(d), timed: [], allDay: [] }; });
+  const byKey = Object.fromEntries(days.map((d) => [d.key, d]));
+  for (const ev of data.events) {
+    const start = new Date(ev.start), end = new Date(ev.end), day = byKey[isoDay(start)];
+    if (!day) continue;
+    if (ev.all_day) { day.allDay.push(ev); continue; }
+    const from = Math.max(0, (start.getHours() - DAY_START) * 60 + start.getMinutes());
+    const to = Math.min(DAY_HOURS * 60, Math.max(from + 25, (end - start) / 60000 + (start.getHours() - DAY_START) * 60 + start.getMinutes()));
+    day.timed.push({ ...ev, from, to, label: `${hhmm(start)} to ${hhmm(end)}` });
+  }
+  let html = `<div class="head"></div>` + days.map((d) => `<div class="head ${d.key === data.today ? "now" : ""}">${d.date.toLocaleDateString("en-GB", { weekday: "short" })}<strong>${d.date.getDate()}</strong></div>`).join("");
+  html += `<div class="allday"></div>` + days.map((d) => `<div class="allday">${d.allDay.map((ev) => `<span class="chip" title="${esc(ev.title)}">${esc(ev.title)}</span>`).join("")}</div>`).join("");
+  html += `<div class="gutter">${[...Array(DAY_HOURS)].map((_, i) => (i ? `<span style="top:${i * HOUR_PX}px">${String(DAY_START + i).padStart(2, "0")}:00</span>` : "")).join("")}</div>`;
+  const now = new Date(), nowTop = ((now.getHours() - DAY_START) * 60 + now.getMinutes()) / 60 * HOUR_PX;
+  for (const d of days) {
+    d.timed.sort((a, b) => a.from - b.from); lanes(d.timed);
+    const blocks = d.timed.map((ev) => `<div class="ev ${ev.local_id ? "mine" : ""} ${ev.to - ev.from < 70 ? "short" : ""}" title="${esc(ev.label)}  ${esc(ev.title)} (${esc(ev.source)})" style="top:${ev.from / 60 * HOUR_PX}px;height:${(ev.to - ev.from) / 60 * HOUR_PX - 2}px;left:${ev.lane / ev.lanes * 100}%;width:calc(${100 / ev.lanes}% - 3px)">${esc(ev.title)}<small>${esc(ev.label)}</small></div>`).join("");
+    const line = d.key === data.today && nowTop > 0 && nowTop < DAY_HOURS * HOUR_PX ? `<div class="nowline" style="top:${nowTop}px"></div>` : "";
+    html += `<div class="col ${d.key === data.today ? "now" : ""}">${blocks}${line}</div>`;
+  }
+  $("#week").innerHTML = html;
+  if (!$("#free-form").day.value) $("#free-form").day.value = data.today;
+}
+tabLoaders.calendar = () => loadCalendar().catch((e) => toast(e.message));
+const shiftWeek = (days) => { weekStart.setDate(weekStart.getDate() + days); tabLoaders.calendar(); };
+$("#cal-prev").addEventListener("click", () => shiftWeek(-7));
+$("#cal-next").addEventListener("click", () => shiftWeek(7));
+$("#cal-now").addEventListener("click", () => { weekStart = mondayOf(new Date()); tabLoaders.calendar(); });
+$("#plan-form").addEventListener("submit", (e) => { e.preventDefault(); const f = e.target; busy(f.querySelector("button"), async () => {
+  await api("/api/events", { title: f.elements.title.value, start: f.start.value, end: f.end.value, notes: f.notes.value });
+  weekStart = mondayOf(new Date(f.start.value)); f.reset(); await loadCalendar(); loadState(); toast("Event planned");
+}); });
+$("#free-form").addEventListener("submit", (e) => { e.preventDefault(); const f = e.target; busy(f.querySelector("button"), async () => {
+  const r = await api("/api/calendar/free", { day: f.day.value, start: f.start.value, end: f.end.value, minutes: +f.minutes.value });
+  $("#free-result").innerHTML = r.gaps.length
+    ? r.gaps.map((g) => `<div class="row"><span class="grow">${esc(g.from)} to ${esc(g.to)}</span><span class="meta">${g.hours} h free</span></div>`).join("") + `<p class="hint">${r.slots} slot${r.slots === 1 ? "" : "s"} of ${r.minutes} minutes fit.</p>`
+    : `<p class="hint">No free time in that window.</p>`;
+}); });
+
+/* ---------- Inbox ---------- */
+let mailFilter = "action"; const openMail = new Set();
+function mailCard(m, info) {
+  const a = m.analysis, analysed = m.analysed_by === "claude";
+  const tag = analysed ? `<span class="tag ${a.priority === "High" ? "warm" : ""}">${esc(a.priority)}</span>` : m.analysed_by === "rules" ? `<span class="tag">${esc(a.category)}</span>` : `<span class="tag ${m.urgent ? "warm" : ""}">${m.urgent ? "Looks urgent" : "Not analysed"}</span>`;
+  const id = esc(m.id);
+  const draft = m.draft_reply != null ? `<textarea data-draft-text="${id}" aria-label="Reply draft">${esc(m.draft_reply)}</textarea><div class="buttons"><button data-mail="save" data-id="${id}">Save draft</button>${info.gmail_drafts ? `<button class="quiet" data-mail="gmail" data-id="${id}">Save to Gmail drafts</button>` : ""}<button class="danger" data-mail="discard" data-id="${id}">Discard draft</button></div><p class="hint">Cassiopeia never sends a reply. ${info.gmail_drafts ? "Send it from Gmail." : "Copy it into your mail app."}</p>` : "";
+  return `<details class="mail" data-mail-id="${id}" ${openMail.has(m.id) ? "open" : ""}><summary>${tag}<span class="from">${esc(m.sender)}</span><span class="subject">${esc(m.subject)}</span><span class="meta">${m.received_ts ? when(m.received_ts) : ""}</span></summary>
+    ${analysed || m.analysed_by === "rules" ? `<p>${esc(a.summary || "")}</p>` : `<p class="hint">Claude has not read this one. ${esc(a.summary || "")}</p>`}
+    <pre class="body">${esc(m.body)}</pre>
+    <div class="buttons">${m.draft_reply == null ? `<button data-mail="draft" data-id="${id}" ${info.claude ? "" : "disabled"}>Draft a reply</button>` : ""}<button class="quiet" data-mail="analyse" data-id="${id}" ${info.claude ? "" : "disabled"}>${analysed ? "Analyse again" : "Analyse with Claude"}</button><button class="quiet" data-mail="${m.status === "completed" ? "reopen" : "done"}" data-id="${id}">${m.status === "completed" ? "Move back to open" : "Mark done"}</button></div>${draft}</details>`;
+}
+async function loadInbox() {
+  const info = await api(`/api/inbox?show=${mailFilter === "done" ? "done" : "open"}`);
+  const shown = mailFilter === "action" ? info.emails.filter((m) => m.analysis.action_required || m.urgent) : info.emails;
+  const waiting = info.emails.filter((m) => m.analysis.action_required || m.urgent).length;
+  if (mailFilter !== "done") $("#inbox-count").textContent = waiting || "";
+  $("#inbox-note").textContent = !info.connected ? "Google is not connected. Connect it from the classic dashboard's Settings page, then come back." : info.minutes_since_sync == null ? "Not checked yet. Checking is free: rules sort the mail and Claude is not called." : `Last checked ${info.minutes_since_sync} minute${info.minutes_since_sync === 1 ? "" : "s"} ago. Checking is free. Claude reads an email only when you ask.`;
+  $("#inbox-pending").innerHTML = info.pending && mailFilter !== "done" ? `<div class="row"><span class="grow">${info.pending} email${info.pending === 1 ? " has" : "s have"} not been read by Claude.</span><button class="quiet" id="inbox-analyse-all" ${info.claude ? "" : "disabled"}>Analyse up to ${info.analyse_cap} now</button></div>` : "";
+  const empty = { action: "Nothing needs action. Look under All open for the rest.", open: "No open emails stored. Press Check for new mail.", done: "Nothing marked done yet." }[mailFilter];
+  $("#inbox-list").innerHTML = shown.map((m) => mailCard(m, info)).join("") || `<p class="hint">${empty}</p>`;
+}
+tabLoaders.inbox = () => loadInbox().catch((e) => toast(e.message));
+$("#inbox-filter").addEventListener("click", (e) => { if (!e.target.dataset.filter) return; mailFilter = e.target.dataset.filter; document.querySelectorAll("#inbox-filter button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.filter === mailFilter)); tabLoaders.inbox(); });
+$("#inbox-sync").addEventListener("click", (e) => busy(e.target, async () => { const s = await api("/api/inbox/sync", { analyse: false }); toast(`${s.new} new, ${s.by_rules} filed by rules, ${s.pending} not yet analysed${s.errors.length ? ". " + s.errors[0] : ""}`); await loadInbox(); }));
+$("#tab-inbox").addEventListener("toggle", (e) => { const id = e.target.dataset?.mailId; if (id) e.target.open ? openMail.add(id) : openMail.delete(id); }, true);
+$("#tab-inbox").addEventListener("click", (e) => {
+  const t = e.target;
+  if (t.id === "inbox-analyse-all") return busy(t, async () => { const s = await api("/api/inbox/sync", { analyse: true }); toast(`Claude analysed ${s.by_claude} email${s.by_claude === 1 ? "" : "s"}`); await loadInbox(); });
+  const action = t.dataset.mail, id = t.dataset.id;
+  if (!action) return;
+  const text = () => document.querySelector(`textarea[data-draft-text="${CSS.escape(id)}"]`)?.value || "";
+  const calls = { draft: ["/api/inbox/draft", { id }], analyse: ["/api/inbox/analyse", { id }], done: ["/api/inbox/done", { id, done: true }], reopen: ["/api/inbox/done", { id, done: false }],
+                  save: ["/api/inbox/save-draft", { id, text: text() }], gmail: ["/api/inbox/save-draft", { id, text: text(), to_gmail: true }], discard: ["/api/inbox/discard-draft", { id }] };
+  busy(t, async () => { await api(...calls[action]); if (action === "done") openMail.delete(id); await loadInbox(); toast({ draft: "Draft written", analyse: "Analysed", done: "Marked done", reopen: "Moved back to open", save: "Draft saved", gmail: "Saved to Gmail drafts", discard: "Draft discarded" }[action]); });
+});
+
+/* ---------- Triggers (shown in Control) ---------- */
+async function loadTriggers() {
+  const t = await api("/api/triggers");
+  $("#triggers").innerHTML = t.kinds.map((k) => `<label class="row"><input type="checkbox" data-trigger="${k.kind}" ${k.on ? "checked" : ""}><span class="grow">${esc(k.about)}</span></label>`).join("")
+    + `<p class="hint">Each thing is announced once, as a Mac notification and a text if texting is on. Nothing is sent between ${esc(t.quiet_hours[0])} and ${esc(t.quiet_hours[1])}.</p>`
+    + t.recent.map((r) => `<div class="row"><span class="grow hint">${esc(r.message)}</span><span class="meta">${when(r.fired_ts)}</span></div>`).join("");
+}
+$("#triggers").addEventListener("change", (e) => { if (e.target.dataset.trigger) busy(null, async () => { await api("/api/triggers/set", { kind: e.target.dataset.trigger, on: e.target.checked }); }); });
+$("#trigger-check").addEventListener("click", (e) => busy(e.target, async () => { const r = await api("/api/triggers/check", {}); toast(r.sent.length ? `Sent ${r.sent.length}: ${r.sent[0]}` : "Nothing new to announce (or it is quiet hours)"); loadTriggers(); }));
+const loadControlBase = loaders.control;
+loaders.control = async () => { await loadControlBase(); await loadTriggers(); };
+
+/* ---------- Start ---------- */
 loadState().catch(() => {});
 show(["today", "talk", "vault", "lab", "control"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "today");
 setInterval(() => { if (!$("#today").hidden) loadState(); }, 120000);   // keep Today fresh

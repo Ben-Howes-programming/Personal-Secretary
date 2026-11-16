@@ -233,3 +233,85 @@ def test_server_serves_the_app_and_guards_changes(site):
     status, raw = call(site + "/api/vault/upload?name=notes.txt", b"partition function", {"X-Cassiopeia": "1"})
     assert status == 200 and json.loads(raw)["kind"] == "Notes"
     assert json.loads(call(site + "/api/vault?q=partition")[1])["results"][0]["name"] == "notes.txt"
+
+
+# Calendar and inbox pages ------------------------------------------------
+def stored_email(email_id, subject, analysed_by="pending", priority="Low", action=False, sender="Dr Smith <a.smith@bath.ac.uk>"):
+    """Put one email in the database the way a sync would."""
+    import time
+    from services import inbox
+    analysis = dict(claude.unanalysed(), priority=priority, action_required=action, summary="Summary.")
+    inbox._store({"id": email_id, "sender": sender, "subject": subject, "date": "", "body": "Body text",
+                  "received_ts": time.time()}, analysis, analysed_by)
+
+
+def test_calendar_page_and_free_time():
+    from cassiopeia import pages, store
+    store.add_event("Problem class", "2026-11-17T10:00:00", "2026-11-17T11:30:00")
+    store.add_event("Gym", "2026-11-17T18:00:00")
+    week = pages.calendar("2026-11-16", 7)
+    assert [e["title"] for e in week["events"]] == ["Problem class", "Gym"]
+    assert week["hours_booked"] == 2.5 and week["events"][0]["local_id"]
+    free = pages.free_time("2026-11-17", "09:00", "13:00", 60)
+    assert [(g["from"], g["to"]) for g in free["gaps"]] == [("09:00", "10:00"), ("11:30", "13:00")]
+    assert free["slots"] == 2
+    with pytest.raises(ValueError):
+        pages.free_time("2026-11-17", "13:00", "09:00")
+
+
+def test_inbox_orders_by_need_and_never_calls_claude_on_load(monkeypatch):
+    from cassiopeia import pages
+    def must_not_be_called(*a, **k):
+        raise AssertionError("loading the inbox must cost nothing")
+    monkeypatch.setattr(claude, "complete", must_not_be_called)
+    stored_email("m1", "Weekly newsletter", analysed_by="rules")
+    stored_email("m2", "Lab report feedback", analysed_by="claude", priority="High", action=True)
+    stored_email("m3", "URGENT: interview slot tomorrow")                    # not analysed, caught by the word rule
+    stored_email("m4", "Seminar next month")
+    listing = pages.inbox_list()
+    assert [m["id"] for m in listing["emails"]][:2] == ["m2", "m3"]
+    assert {m["id"]: m["urgent"] for m in listing["emails"]} == {"m1": False, "m2": True, "m3": True, "m4": False}
+    assert listing["pending"] == 2 and listing["emails"][0]["sender"] == "Dr Smith"
+    pages.set_done("m2")
+    assert "m2" not in [m["id"] for m in pages.inbox_list()["emails"]]
+    assert [m["id"] for m in pages.inbox_list("done")["emails"]] == ["m2"]
+
+
+def test_drafts_are_stored_but_never_sent(monkeypatch):
+    from cassiopeia import pages, store
+    stored_email("m1", "Can we meet?", analysed_by="claude", priority="Medium", action=True)
+    fake_claude(monkeypatch, "Hi Dr Smith,\n\nYes, [availability].\n\nBest,\nBen")
+    assert pages.draft_reply("m1")["draft_reply"].startswith("Hi Dr Smith")
+    assert pages.save_draft("m1", "Edited")["draft_reply"] == "Edited"
+    with pytest.raises(RuntimeError):
+        pages.save_draft("m1", "Edited", to_gmail=True)                      # Gmail drafts are off by default
+    assert pages.discard_draft("m1")["draft_reply"] is None
+    assert store.outbox() == []                                              # nothing left the machine
+
+
+# Triggers ------------------------------------------------------------------
+def test_triggers_fire_once_and_respect_quiet_hours(monkeypatch):
+    from cassiopeia import events, store, triggers
+    from database import tasks
+    noon = datetime(2026, 11, 17, 12, 0, tzinfo=events.ZONE)
+    monkeypatch.setattr(events, "now", lambda: noon)
+    tasks.add_task("Submit ESA application", due="2026-11-18")
+    tasks.add_task("Far away", due="2026-12-25")
+    store.add_event("Problem class", "2026-11-17T12:25:00")
+    stored_email("m1", "Offer letter", analysed_by="claude", priority="High", action=True)
+
+    assert triggers.in_quiet_hours(noon.replace(hour=23, minute=45)) and triggers.in_quiet_hours(noon.replace(hour=6))
+    assert not triggers.in_quiet_hours(noon)
+    assert triggers.check(noon.replace(hour=2)) == []                        # asleep: nothing sent, nothing lost
+
+    sent = triggers.check(noon)
+    assert sent == ["Due tomorrow: Submit ESA application", "In 25 minutes: 12:25 to 13:25  Problem class",
+                    "Email needing action from Dr Smith: Offer letter"]
+    assert triggers.check(noon) == []                                        # each thing is announced once
+    assert len(store.outbox()) == 3 and all(m["status"] == "off" for m in store.outbox())   # texting is off in tests
+
+    triggers.set_enabled("deadline", False)
+    tasks.add_task("Another one", due="2026-11-17")
+    assert triggers.check(noon) == []
+    triggers.set_enabled("deadline", True)
+    assert triggers.check(noon) == ["Due today: Another one"]
