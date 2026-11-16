@@ -1,0 +1,16 @@
+# Look and behaviour of the app. Colours match ui/theme.py.
+[theme]
+base = "dark"
+primaryColor = "#f0b45c"
+backgroundColor = "#161d2b"
+secondaryBackgroundColor = "#1e2738"
+textColor = "#e9edf5"
+
+[server]
+maxUploadSize = 2000        # megabytes, so a large Apple Health export fits
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"

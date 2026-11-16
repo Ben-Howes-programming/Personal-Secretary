@@ -1,96 +1,75 @@
 # Personal Secretary
 
-Personal AI assistant built in Python to bring together email, calendar information and personal organisation in one application.
+A local dashboard that pulls my email, calendar, tasks, money, training and university work into one place, with a Claude assistant that can see all of it.
 
-I started this project to explore how software could reduce the amount of routine administration I deal with as a student. Rather than building a simple chatbot, I wanted to work with real data and real services, while keeping the system under my control.
-
-The project is still under active development.
+I started it to cut the routine admin of being a student. Version 1.0 is a full rebuild: the first version was a single-file prototype, this one is a modular app with a proper data layer, tests, and a strict budget on AI usage.
 
 ## What it does
 
-### Email
+| Page | What you get |
+|---|---|
+| Today | What needs me now: emails needing action, a timeline of the day with a suggested training slot, tasks, deadlines, fund prices |
+| Assistant | Chat with Claude using my own data as context, by typing or voice. Chats are saved locally |
+| Inbox | Gmail (plus optional Outlook and iCloud) triaged by priority, with summaries and reply drafts. The app never sends mail |
+| Calendar | Merged agenda and a free-time finder |
+| Tasks | To-dos grouped by urgency |
+| Tutoring | Free lesson slots from the live calendar and enquiries awaiting a reply |
+| Finance | Accounts, net worth over time, holdings with live value, budget, ISA allowances, savings projections |
+| Markets | Fund tracking, market indicators with plain-English notes, news with source lean shown, a pretend-money portfolio, and a short course on the vocabulary |
+| Health | Sleep and training patterns, a weekly gym and running plan timed around the calendar, strength progression, Apple Health import |
+| University | Deadlines, marks against a target, study time, and a spaced review queue for lectures |
+| Placements | Application tracker |
+| Settings | Connections, Claude usage, preferences, backup |
 
-The assistant connects to Gmail and analyses incoming messages using the Claude API.
+## How it is built
 
-It can currently:
+- **Python and Streamlit** for the interface, **SQLite** for storage, all on my own machine.
+- **Claude** through either a Claude Pro plan (via Claude Code) or the Anthropic API, chosen in `.env`.
+- **Google APIs** for Gmail and Calendar, read-only unless a write feature is switched on.
+- **Yahoo Finance** (yfinance) for prices and **RSS** for headlines.
 
-- Identify emails that require action
-- Categorise emails and assign priorities
-- Produce short summaries of messages
-- Identify when a reply is needed
-- Generate editable reply drafts
-- Detect tutoring enquiries and requested availability
-- Store analysed emails locally so they do not need to be repeatedly processed
+```
+app.py        entry point and navigation
+config.py     settings, no secrets
+ai/           every Claude call, context building, voice
+database/     schema and queries, one module per area
+services/     Google, Outlook, iCloud, markets, news, training logic
+ui/           theme, shared components, cached state
+views/        one file per page
+tests/        logic tests and a page smoke test
+```
 
-The aim is not to replace the inbox. Instead, the assistant turns a large inbox into a smaller list of things that actually need attention.
+### Keeping AI usage low
 
-### Calendar
+The assistant is useful because it sees real data, which could get expensive. The app is designed so that it does not:
 
-Google Calendar is integrated into the application so that the assistant can use my schedule when answering questions.
+- Pages read from the local database, so opening one costs nothing.
+- Each email is analysed once, in batches, by the cheapest model. Bulk mail is filed by rules and never reaches Claude.
+- Briefings, study notes and summaries are stored and reused until the data behind them changes.
+- Health, finance and university analysis is ordinary Python, not AI.
+- Every request is logged, and the Settings page shows where tokens went.
 
-It currently:
+### Safety choices
 
-- Displays today's events
-- Shows upcoming events
-- Handles UK timezone information
-- Calculates free periods
-- Uses calendar availability when dealing with tutoring enquiries
+- No email is ever sent. Drafts are for me to review.
+- Calendar and Gmail access is read-only by default.
+- Credentials and the database are kept out of Git.
+- Email text is treated as untrusted: escaped before display and marked as data in prompts.
+- Finance and health pages give general information, not advice.
 
-For example, if someone asks about a tutoring lesson on Sunday, the assistant can check my actual calendar rather than relying on a manually maintained list of available times.
+## Running it
 
-### Tutoring
+See [SETUP_GUIDE.md](SETUP_GUIDE.md). In short:
 
-Tutoring is the first example of combining information from multiple sources.
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env        # then fill in what you use
+streamlit run app.py
+```
 
-An email enquiry can be analysed to identify the requested day and time. The calendar can then be checked to determine whether that time is available.
+Tests: `python -m pytest tests -q`
 
-This is an early example of the direction I want the project to take: the assistant should understand information from different services and use it together rather than treating each integration independently.
+## Status
 
-### Web interface
-
-The application uses Streamlit to provide a single interface for the different parts of the assistant.
-
-Current sections include:
-
-- Dashboard
-- AI Assistant
-- Email
-- Tutoring
-- Calendar
-- Finance
-- Health
-- University
-- Settings
-
-Some of these sections are currently placeholders for future development.
-
-## Technical implementation
-
-The project is written in Python and currently uses:
-
-- Python
-- Streamlit
-- Anthropic Claude API
-- Gmail API
-- Google Calendar API
-- SQLite
-- Google OAuth 2.0
-- Git and GitHub
-
-The application is split into separate services rather than putting all of the functionality into one file.
-
-Personal-Secretary/
-│
-├── ai/
-│   └── claude.py
-│
-├── database/
-│   └── database.py
-│
-├── services/
-│   ├── gmail.py
-│   └── calendar.py
-│
-├── app.py
-├── requirements.txt
-└── README.md
+Version 1.0, November 2026. Under active development. [CLAUDE.md](CLAUDE.md) documents the architecture and conventions for anyone, human or AI, working on the code.

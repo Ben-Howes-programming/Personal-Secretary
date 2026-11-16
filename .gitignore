@@ -1,8 +1,18 @@
-.venv/
+# Secrets and personal data: never commit these
 .env
-__pycache__/
-*.pyc
 credentials.json
 token.json
-.DS_Store
+ms_token.json
 secretary.db
+*.db
+*.db-journal
+
+# Python and editor clutter
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+.vscode/
+*.zip
