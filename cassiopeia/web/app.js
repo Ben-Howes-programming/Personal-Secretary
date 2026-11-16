@@ -388,6 +388,95 @@ $("#trigger-check").addEventListener("click", (e) => busy(e.target, async () => 
 const loadControlBase = loaders.control;
 loaders.control = async () => { await loadControlBase(); await loadTriggers(); };
 
+/* ---------- Money ---------- */
+const gbp = (x) => (x == null ? "not set" : `${x < 0 ? "-" : ""}£${Math.abs(Number(x)).toLocaleString("en-GB", { maximumFractionDigits: 0 })}`);
+const formData = (form) => Object.fromEntries(new FormData(form).entries());
+function sparkline(history) {
+  if (history.length < 2) return `<p class="hint">Record balances on two different days to see the trend.</p>`;
+  const values = history.map((h) => h.net_worth), low = Math.min(...values), span = Math.max(...values) - low || 1;
+  const points = values.map((v, i) => `${(i / (values.length - 1)) * 100},${58 - ((v - low) / span) * 52}`).join(" ");
+  return `<svg class="spark" viewBox="0 0 100 60" preserveAspectRatio="none" role="img" aria-label="Net worth from ${esc(history[0].date)} to ${esc(history.at(-1).date)}"><polyline points="${points}"/></svg><p class="hint">${esc(history[0].date)} to ${esc(history.at(-1).date)}</p>`;
+}
+function renderMoney(m) {
+  const options = (list) => list.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join("");
+  const isas = m.accounts.filter((a) => ["investment", "lisa"].includes(a.kind_key));
+  const od = m.overdraft, b = m.budget;
+  $("#tab-money").innerHTML = `
+  <div class="split">
+    <div>
+      <div class="panel"><h2>Accounts</h2>
+        <table><tr><th>Account</th><th>Kind</th><th class="num">Rate</th><th class="num">Balance</th><th class="num">As of</th></tr>
+        ${m.accounts.map((a) => `<tr><td>${esc(a.name)}</td><td>${esc(a.kind)}</td><td class="num">${a.rate == null ? "" : a.rate + "%"}</td><td class="num">${a.balance == null ? `<span class="hint">not set</span>` : (a.is_liability ? "owed " : "") + gbp(Math.abs(a.balance))}</td><td class="num nowrap">${esc(a.balance_date || "")}</td></tr>`).join("")}</table>
+        <form class="inline" data-money="balance"><select name="account_id" aria-label="Account">${options(m.accounts)}</select><input name="balance" type="number" step="0.01" placeholder="Balance in £" required><input name="date" type="date" aria-label="Date, blank for today"><button>Record balance</button></form>
+        <p class="hint">For the overdraft, enter the amount owed as a positive number.</p></div>
+      <div class="panel"><h2>Monthly budget</h2>
+        <div class="row"><span class="grow">Regular income</span><span>${gbp(b.income)}</span></div>
+        <div class="row"><span class="grow">Regular costs</span><span>${gbp(b.costs)}</span></div>
+        <div class="row"><span class="grow"><strong>Left each month</strong></span><span class="${b.surplus >= 0 ? "up" : "down"}">${gbp(b.surplus)}</span></div>
+        ${m.recurring.map((r) => `<div class="row"><span class="grow hint">${esc(r.name)} (${esc(r.kind)}, ${esc(r.frequency)})</span><input type="number" step="0.01" value="${r.amount}" aria-label="Amount for ${esc(r.name)}" data-amount-for="${r.id}" style="width:6.5rem"><button class="quiet" data-money-save="${r.id}">Save</button><button class="danger" data-money-remove="${r.id}">Remove</button></div>`).join("")}
+        <form class="inline" data-money="recurring"><input name="name" placeholder="Name, e.g. Student loan" required><select name="kind" aria-label="Kind"><option value="income">Income</option><option value="expense">Expense</option></select><input name="amount" type="number" step="0.01" placeholder="£" required><select name="frequency" aria-label="How often"><option>monthly</option><option>weekly</option><option>yearly</option></select><button>Add</button></form></div>
+    </div>
+    <aside>
+      <div class="panel"><h2>Net worth</h2>${m.worth.has_data ? `<div class="figure-big">${gbp(m.worth.net)}</div><p>${gbp(m.worth.assets)} held, ${gbp(m.worth.debts)} owed</p>${sparkline(m.history)}` : `<p class="hint">Not set. Record a balance for each account to see this.</p>`}</div>
+      <div class="panel"><h2>ISA allowances since ${esc(m.tax_year_start)}</h2>
+        ${m.allowances.map((a) => `<div>${esc(a.name)}<div class="bar"><i style="width:${Math.min(100, (a.used / a.limit) * 100)}%"></i></div><p class="hint">${gbp(a.used)} paid in, ${gbp(Math.max(0, a.limit - a.used))} left of ${gbp(a.limit)}${a.bonus != null ? `. Bonus earned: ${gbp(a.bonus)}` : ""}</p></div>`).join("")}
+        ${isas.length ? `<form class="inline" data-money="contribution"><select name="account_id" aria-label="ISA account">${options(isas)}</select><input name="amount" type="number" step="0.01" placeholder="Paid in £" required><button>Record payment in</button></form>` : ""}
+        <p class="hint">The Lifetime ISA limit counts towards the overall allowance. Limits come from config.py: check gov.uk each tax year.</p></div>
+      <div class="panel"><h2>Clearing the overdraft</h2>
+        ${od.plan ? `<div class="figure-big">${gbp(od.plan.per_month)}<span class="hint"> a month</span></div><p>${gbp(od.owed)} owed, ${od.plan.months} months until the target.</p>` : `<p class="hint">No overdraft balance entered. Record it under Accounts to see a plan.</p>`}
+        <form class="inline" data-money="overdraft-target"><label class="hint">Clear it by <input name="date" type="date" value="${esc(od.target)}" required></label><button class="quiet">Set date</button></form></div>
+      <p class="hint">${esc(m.note)}</p>
+    </aside>
+  </div>`;
+}
+tabLoaders.money = () => api("/api/money").then(renderMoney).catch((e) => toast(e.message));
+$("#tab-money").addEventListener("submit", (e) => { e.preventDefault(); const f = e.target; busy(f.querySelector("button"), async () => { renderMoney(await api("/api/money/update", { action: f.dataset.money, ...formData(f) })); toast("Saved"); }); });
+$("#tab-money").addEventListener("click", (e) => {
+  const remove = e.target.dataset.moneyRemove, save = e.target.dataset.moneySave;
+  if (remove) busy(e.target, async () => renderMoney(await api("/api/money/update", { action: "remove-recurring", id: +remove })));
+  if (save) busy(e.target, async () => { renderMoney(await api("/api/money/update", { action: "set-recurring", id: +save, amount: document.querySelector(`[data-amount-for="${save}"]`).value })); toast("Saved"); });
+});
+
+/* ---------- University ---------- */
+function renderUniversity(u) {
+  const modules = u.modules.map((m) => `<option value="${m.id}">${esc(m.name)}</option>`).join("");
+  const score = `<select name="understanding" aria-label="Understanding, 1 to 5"><option value="1">1 lost</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5 solid</option></select>`;
+  const needed = (m) => m.needed == null ? (m.total_weight ? `<span class="up">all marked</span>` : `<span class="hint">no weights yet</span>`) : m.needed > 100 ? `<span class="down">${m.needed.toFixed(0)}%, out of reach</span>` : `<span class="${m.needed <= u.target ? "up" : ""}">${Math.max(0, m.needed).toFixed(0)}%</span>`;
+  $("#tab-university").innerHTML = `
+  <div class="panel"><h2>Modules against a ${u.target}% target</h2>
+    <table><tr><th>Module</th><th class="num">Average so far</th><th class="num">Weight marked</th><th class="num">Needed on the rest</th><th class="num">Study, last 28 days</th></tr>
+    ${u.modules.map((m) => `<tr><td>${esc(m.name)}${m.code ? ` <span class="hint">${esc(m.code)}</span>` : ""}</td><td class="num">${m.average == null ? `<span class="hint">not set</span>` : m.average.toFixed(1) + "%"}</td><td class="num">${m.done_weight} of ${m.total_weight}%</td><td class="num">${needed(m)}</td><td class="num">${(m.study_minutes / 60).toFixed(1)} h</td></tr>`).join("")}</table>
+    <p class="hint">"Needed on the rest" is the average you need on unmarked work in that module to finish on target. It only counts assessments that have a weight.</p></div>
+  <div class="split even">
+    <div>
+      <div class="panel"><h2>Open assessments</h2>
+        ${u.open.length ? `<table><tr><th>Assessment</th><th>Due</th><th class="num">Weight</th><th></th></tr>${u.open.map((a) => `<tr><td>${esc(a.title)}<br><span class="hint">${esc(a.module || "")}</span></td><td class="nowrap">${esc(a.due || "")}</td><td class="num">${a.weight == null ? "" : a.weight + "%"}</td><td class="num"><input type="number" min="0" max="100" step="0.1" placeholder="Mark" aria-label="Mark for ${esc(a.title)}" data-mark-for="${a.id}"> <button data-uni="mark" data-id="${a.id}">Save mark</button> <button class="quiet" data-uni="done" data-id="${a.id}">Done</button></td></tr>`).join("")}</table>` : `<p class="hint">Nothing open. Add your next assessment below.</p>`}
+        <form class="inline" data-uni-form="assessment"><select name="module_id" aria-label="Module">${modules}</select><input name="title" placeholder="Title" required><input name="due" type="date" aria-label="Due date"><input name="weight" type="number" min="0" max="100" step="0.5" placeholder="Weight %"><button>Add assessment</button></form></div>
+      <div class="panel"><h2>Log study time</h2>
+        <form class="inline" data-uni-form="study"><select name="module_id" aria-label="Module">${modules}</select><input name="minutes" type="number" min="5" step="5" placeholder="Minutes" required><input name="note" placeholder="What you did (optional)"><button>Log</button></form>
+        <p class="hint">${(u.study_total / 60).toFixed(1)} hours logged in the last 28 days.</p></div>
+    </div>
+    <div>
+      <div class="panel"><h2>Lectures to review today</h2>
+        ${u.reviews.map((l) => `<div class="row"><span class="grow">${esc(l.topic)}<br><span class="hint">${esc(l.module || "")}, last rated ${l.understanding} of 5</span></span><select data-review-for="${l.id}" aria-label="Understanding now"><option>1</option><option>2</option><option>3</option><option selected>4</option><option>5</option></select><button data-uni="review" data-id="${l.id}">Reviewed</button></div>`).join("") || `<p class="hint">Nothing is due. Log a lecture and it comes back for review on a spaced schedule.</p>`}</div>
+      <div class="panel"><h2>Log a lecture</h2>
+        <form class="inline" data-uni-form="lecture"><select name="module_id" aria-label="Module">${modules}</select><input name="topic" placeholder="Topic" required>${score}<button>Log lecture</button></form>
+        <p class="hint">Rated 3 or below, it returns tomorrow. Otherwise in three days, then at longer gaps.</p>
+        ${u.recent_lectures.map((l) => `<div class="row"><span class="grow hint">${esc(l.topic)}</span><span class="meta">${esc(l.date)}, ${l.understanding} of 5</span></div>`).join("")}</div>
+    </div>
+  </div>`;
+}
+tabLoaders.university = () => api("/api/university").then(renderUniversity).catch((e) => toast(e.message));
+$("#tab-university").addEventListener("submit", (e) => { e.preventDefault(); const f = e.target; busy(f.querySelector("button"), async () => { renderUniversity(await api("/api/university/update", { action: f.dataset.uniForm, ...formData(f) })); toast("Saved"); }); });
+$("#tab-university").addEventListener("click", (e) => {
+  const action = e.target.dataset.uni, id = e.target.dataset.id;
+  if (!action) return;
+  const body = { action, id: +id };
+  if (action === "mark") body.mark = document.querySelector(`[data-mark-for="${id}"]`).value;
+  if (action === "review") body.understanding = document.querySelector(`[data-review-for="${id}"]`).value;
+  busy(e.target, async () => { renderUniversity(await api("/api/university/update", body)); toast("Saved"); });
+});
+
 /* ---------- Start ---------- */
 loadState().catch(() => {});
 show(["today", "talk", "vault", "lab", "control"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "today");

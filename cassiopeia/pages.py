@@ -172,3 +172,121 @@ def discard_draft(email_id):
 def set_done(email_id, done=True):
     db.update_email_status(email_id, "completed" if done else "open")
     return shape_email(_email(email_id))
+
+
+# ------------------------------------------------------------------
+# Money (figures you entered yourself; nothing here is advice)
+# ------------------------------------------------------------------
+ACCOUNT_KINDS = {"current": "Current account", "savings": "Savings", "investment": "Stocks and Shares ISA",
+                 "lisa": "Lifetime ISA", "overdraft": "Overdraft", "other": "Other"}
+MONEY_NOTE = "These are the figures you entered. General information, not personal financial advice."
+
+
+def money():
+    """Accounts, net worth, ISA allowances, monthly budget and the overdraft plan."""
+    from datetime import date
+    from database import finance
+    accounts = finance.list_accounts()
+    paid = finance.contributions_this_tax_year()
+    isa_paid, lisa_paid = paid.get("investment", 0) + paid.get("lisa", 0), paid.get("lisa", 0)
+    overdraft = next((a for a in accounts if a["kind"] == "overdraft"), None)
+    owed = abs(overdraft["balance"]) if overdraft and overdraft["balance"] else 0.0
+    target = db.get_setting("pref_overdraft_clear_by", "2029-07-01")     # shared with the classic dashboard
+    plan = finance.payoff_plan(owed, finance.parse_date(target) or date(2029, 7, 1)) if owed else None
+    return {
+        "accounts": [{"id": a["id"], "name": a["name"], "kind": ACCOUNT_KINDS.get(a["kind"], a["kind"]), "kind_key": a["kind"],
+                      "rate": a["interest_rate"], "balance": a["balance"], "balance_date": a["balance_date"],
+                      "is_liability": bool(a["is_liability"])} for a in accounts],
+        "worth": finance.net_worth(accounts), "history": finance.net_worth_history(),
+        "tax_year_start": finance.tax_year_start().isoformat(),
+        "allowances": [
+            {"name": "ISA allowance, all ISAs together", "used": isa_paid, "limit": config.ISA_ALLOWANCE},
+            {"name": "Lifetime ISA", "used": lisa_paid, "limit": config.LISA_ALLOWANCE,
+             "bonus": lisa_paid * config.LISA_BONUS_RATE}],
+        "budget": finance.monthly_budget(), "recurring": finance.list_recurring(),
+        "overdraft": {"owed": owed, "target": target, "plan": plan}, "note": MONEY_NOTE,
+    }
+
+
+def _amount(value, name="Amount"):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a number.")
+
+
+def money_update(action, body):
+    """Every change the Money page can make. Returns the refreshed page."""
+    from database import finance
+    if action == "balance":
+        finance.record_balance(int(body["account_id"]), _amount(body.get("balance"), "Balance"), body.get("date") or None)
+    elif action == "contribution":
+        finance.add_contribution(int(body["account_id"]), _amount(body.get("amount")), body.get("date") or None)
+    elif action == "recurring":
+        if body.get("kind") not in ("income", "expense") or not str(body.get("name", "")).strip():
+            raise ValueError("A regular item needs a name and a kind of income or expense.")
+        frequency = body.get("frequency") if body.get("frequency") in finance.MONTHLY_FACTOR else "monthly"
+        finance.add_recurring(body["name"].strip(), body["kind"], _amount(body.get("amount")), frequency)
+    elif action == "set-recurring":
+        finance.update_recurring(int(body["id"]), _amount(body.get("amount")))
+    elif action == "remove-recurring":
+        finance.delete_recurring(int(body["id"]))
+    elif action == "overdraft-target":
+        if not finance.parse_date(body.get("date")):
+            raise ValueError("Pick a date to clear the overdraft by.")
+        db.set_setting("pref_overdraft_clear_by", body["date"])
+    else:
+        raise ValueError("Unknown money action.")
+    return money()
+
+
+# ------------------------------------------------------------------
+# University
+# ------------------------------------------------------------------
+def university_page():
+    """Module standings against the degree target, open assessments, the review queue and study time."""
+    from database import university
+    modules, assessments = university.list_modules(), university.list_assessments()
+    minutes = {}
+    for row in university.study_minutes(28):
+        minutes[row["module"]] = minutes.get(row["module"], 0) + (row["minutes"] or 0)
+    standings = []
+    for module in modules:
+        own = [a for a in assessments if a["module_id"] == module["id"]]
+        standings.append(dict(university.module_standing(own, config.DEGREE_TARGET), id=module["id"],
+                              name=module["name"], code=module["code"], assessments=len(own),
+                              study_minutes=minutes.get(module["name"], 0)))
+    return {"target": config.DEGREE_TARGET, "modules": standings,
+            "open": [a for a in assessments if a["status"] != "done"],
+            "marked": [a for a in assessments if a["mark"] is not None][-12:],
+            "reviews": university.reviews_due(), "recent_lectures": university.recent_lectures(8),
+            "study_total": sum(minutes.values())}
+
+
+def university_update(action, body):
+    """Every change the University page can make. Returns the refreshed page."""
+    from database import university
+    if action == "assessment":
+        if not str(body.get("title", "")).strip():
+            raise ValueError("The assessment needs a title.")
+        weight = _amount(body["weight"], "Weight") if str(body.get("weight", "")).strip() else None
+        university.add_assessment(int(body["module_id"]), body["title"].strip(), body.get("due") or None, weight)
+    elif action == "mark":
+        mark = _amount(body.get("mark"), "Mark")
+        if not 0 <= mark <= 100:
+            raise ValueError("A mark is between 0 and 100.")
+        university.set_mark(int(body["id"]), mark)
+    elif action == "done":
+        university.set_assessment_status(int(body["id"]), "done")
+    elif action == "lecture":
+        rating = int(_amount(body.get("understanding"), "Understanding"))
+        if not str(body.get("topic", "")).strip() or not 1 <= rating <= 5:
+            raise ValueError("A lecture needs a topic and an understanding score from 1 to 5.")
+        university.log_lecture(int(body["module_id"]), body["topic"].strip(), rating)
+    elif action == "review":
+        university.complete_review(int(body["id"]), int(_amount(body.get("understanding"), "Understanding")))
+    elif action == "study":
+        university.log_study(int(body["module_id"]), _amount(body.get("minutes"), "Minutes"), body.get("note", ""))
+    else:
+        raise ValueError("Unknown university action.")
+    return university_page()

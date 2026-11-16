@@ -315,3 +315,40 @@ def test_triggers_fire_once_and_respect_quiet_hours(monkeypatch):
     assert triggers.check(noon) == []
     triggers.set_enabled("deadline", True)
     assert triggers.check(noon) == ["Due today: Another one"]
+
+
+# Money and University pages ------------------------------------------------
+def test_money_page_uses_only_entered_figures():
+    from cassiopeia import pages
+    start = pages.money()
+    assert start["worth"]["has_data"] is False and all(a["balance"] is None for a in start["accounts"])   # nothing invented
+    ids = {a["kind_key"]: a["id"] for a in start["accounts"]}
+    pages.money_update("balance", {"account_id": ids["investment"], "balance": "1500"})
+    pages.money_update("balance", {"account_id": ids["overdraft"], "balance": "1200"})
+    pages.money_update("contribution", {"account_id": ids["lisa"], "amount": "400"})
+    pages.money_update("recurring", {"name": "Student loan", "kind": "income", "amount": "900", "frequency": "monthly"})
+    page = pages.money_update("overdraft-target", {"date": "2029-07-01"})
+    assert page["worth"]["net"] == 300 and page["overdraft"]["owed"] == 1200 and page["overdraft"]["plan"]["months"] > 0
+    assert page["allowances"][1]["used"] == 400 and page["allowances"][1]["bonus"] == 100
+    assert page["allowances"][0]["used"] == 400                                # the Lifetime ISA counts towards the ISA limit
+    assert page["budget"]["surplus"] == pytest.approx(900 - config.RENT_PER_MONTH)
+    with pytest.raises(ValueError):
+        pages.money_update("balance", {"account_id": ids["investment"], "balance": "lots"})
+
+
+def test_university_page_tracks_the_target():
+    from cassiopeia import pages
+    module = pages.university_page()["modules"][0]
+    pages.university_update("assessment", {"module_id": module["id"], "title": "Coursework", "weight": "40", "due": "2026-12-01"})
+    page = pages.university_update("assessment", {"module_id": module["id"], "title": "Exam", "weight": "60"})
+    coursework = next(a for a in page["open"] if a["title"] == "Coursework")
+    page = pages.university_update("mark", {"id": coursework["id"], "mark": "60"})
+    standing = page["modules"][0]
+    assert standing["average"] == 60 and standing["done_weight"] == 40
+    assert standing["needed"] == pytest.approx(85)                             # (75*100 - 40*60) / 60
+    page = pages.university_update("lecture", {"module_id": module["id"], "topic": "Partition function", "understanding": "2"})
+    assert page["recent_lectures"][0]["topic"] == "Partition function"
+    page = pages.university_update("study", {"module_id": module["id"], "minutes": "90"})
+    assert page["study_total"] == 90
+    with pytest.raises(ValueError):
+        pages.university_update("mark", {"id": coursework["id"], "mark": "140"})

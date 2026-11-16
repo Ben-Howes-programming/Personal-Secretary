@@ -136,6 +136,16 @@ td.num, th.num { text-align: right; } .up { color: var(--ok); } .down { color: v
 .mail textarea { width: 100%; min-height: 150px; margin: 0.5rem 0; }
 .mail .buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.6rem 0 0.3rem; }
 
+/* Money and University */
+.figure-big { font: 800 2.6rem/1 var(--display); letter-spacing: -0.03em; margin: 0.2rem 0 0.4rem; }
+.figure-big .hint { font: 400 1rem var(--body); letter-spacing: 0; }
+.nowrap { white-space: nowrap; }
+.bar { height: 8px; border-radius: 99px; background: var(--deep); overflow: hidden; margin: 0.3rem 0 0.2rem; }
+.bar i { display: block; height: 100%; background: var(--amber); border-radius: 99px; }
+.spark { width: 100%; height: 64px; margin-top: 0.4rem; } .spark polyline { fill: none; stroke: var(--amber); stroke-width: 2; vector-effect: non-scaling-stroke; }
+td input, td select { padding: 0.25rem 0.4rem; width: 5.2rem; } td button { padding: 0.25rem 0.6rem; }
+.inline input[type="number"] { width: 7rem; flex: 0 1 7rem; }
+
 /* Vault and lab */
 .drop { border-style: dashed; text-align: center; } .drop.over { border-color: var(--amber); background: #222a60; }
 .drop .inline { justify-content: center; }

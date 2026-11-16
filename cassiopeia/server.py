@@ -96,6 +96,8 @@ GET = {
     "/api/calendar": lambda q: pages.calendar(q.get("start"), q.get("days", 7)),
     "/api/inbox": lambda q: pages.inbox_list(q.get("show", "open")),
     "/api/triggers": lambda q: triggers.status(),
+    "/api/money": lambda q: pages.money(),
+    "/api/university": lambda q: pages.university_page(),
 }
 
 
@@ -149,7 +151,7 @@ def guarded(action):
     def run(body, q, raw):
         try:
             return action(body)
-        except (RuntimeError, ValueError, claude.AIError) as problem:
+        except (RuntimeError, ValueError, KeyError, claude.AIError) as problem:
             raise Problem(str(problem))
     return run
 
@@ -180,6 +182,8 @@ POST = {
     "/api/inbox/save-draft": guarded(lambda b: pages.save_draft(b["id"], b.get("text", ""), bool(b.get("to_gmail")))),
     "/api/inbox/discard-draft": guarded(lambda b: pages.discard_draft(b["id"])),
     "/api/inbox/done": guarded(lambda b: pages.set_done(b["id"], bool(b.get("done", True)))),
+    "/api/money/update": guarded(lambda b: pages.money_update(b.get("action"), b)),
+    "/api/university/update": guarded(lambda b: pages.university_update(b.get("action"), b)),
     "/api/triggers/set": guarded(lambda b: triggers.set_enabled(b.get("kind"), b.get("on")) or triggers.status()),
     "/api/triggers/check": lambda b, q, r: {"sent": triggers.check()},
     "/api/test-message": post_test_message,

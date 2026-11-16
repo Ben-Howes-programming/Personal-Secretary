@@ -143,7 +143,7 @@ Ids for non-Gmail mail are prefixed `ms:` and `icloud:`.
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests -q            # 35 tests, about 10 seconds, no network
+python -m pytest tests -q            # 41 tests, about 10 seconds, no network
 streamlit run app.py                 # then click through the page you changed
 ```
 
@@ -184,6 +184,8 @@ cassiopeia/
   __main__.py     Starts database, server, scheduler, then a window (Chrome app mode, pywebview, or browser)
   server.py       Standard-library HTTP server on 127.0.0.1:8765. GET and POST route tables near the top
   brain.py        Chat. Claude requests actions as <action>{json}</action> lines; run_action() carries them out
+  pages.py        Data for the Today tabs: calendar, inbox, money, university. No Claude call on load
+  triggers.py     Unprompted alerts (deadline, urgent email, event soon). Once each, never in quiet hours
   briefing.py     Morning and evening briefings. Falls back to a rule-based text if Claude is unreachable
   scheduler.py    Background loop. due() decides when a daily job runs. Optional activity sampling
   notify.py       Mac notification, iMessage to OWNER_PHONE, email to the owner's own address. Nothing else
@@ -203,11 +205,12 @@ Rules specific to Cassiopeia, on top of section 4:
 1. The server stays on 127.0.0.1 until a token login exists. Keep the Host check and the `X-Cassiopeia` header check.
 2. Every POST route that changes or sends something goes in the `POST` table in `server.py`, never under `GET`.
 3. In `web/app.js`, text from the server passes through `esc()` or `markdown()` before it becomes HTML.
-4. A new action for the assistant needs three things: a line in `brain.ACTIONS`, a branch in `brain.run_action()`, and a test. Lookup actions go in `brain.LOOKUPS`. Keep the rule that nothing is changed or sent after `read_url`.
+4. A new tab under Today needs four things: a data function in `pages.py`, a route in `server.py`, a `tabLoaders` entry in `web/app.js`, and a test. Loading a tab must cost zero tokens.
+4a. A new action for the assistant needs three things: a line in `brain.ACTIONS`, a branch in `brain.run_action()`, and a test. Lookup actions go in `brain.LOOKUPS`. Keep the rule that nothing is changed or sent after `read_url`.
 5. No code path may place a real trade or move money. The lab reads prices and writes to `cass_backtests` and `cass_paper` only.
 6. Simulations and self-updates always wait for Ben's click. Do not add an auto-run or auto-merge option without his explicit request.
 7. Cassiopeia must not import Streamlit. Shared logic belongs in `database/`, `services/` or `ai/`.
 8. New tables are named `cass_*` and created in `store.SCHEMA` with `CREATE TABLE IF NOT EXISTS`.
 9. The design: indigo night `#141a3c`, vellum text `#efe6d2`, amber `#f2b33d`, Bricolage Grotesque headings, IBM Plex Sans body. The W of five stars in the header is the navigation and the one loud element. Keep everything else quiet. Sentence case, no all-caps labels, no em dashes.
 
-Status at hand-over: 15 Cassiopeia tests and the 19 core tests pass on Linux, and every page was rendered in headless Chrome. Nothing has run on Ben's Mac. Voice, iMessage, protocols, the login item and self-update are untested there. Fix first-run reports at the root, then work down the roadmap in `CASSIOPEIA.md` section 8.
+Status at hand-over (0.2.0): all 41 tests pass on Linux and on Ben's Mac for 0.1, and every page and tab was rendered in headless Chrome. Ben has started 0.1 on his Mac and the window opened. The 0.2 tabs (Calendar, Inbox, Money, University) and the triggers have not run there yet. Voice, iMessage, protocols, the login item and self-update are untested there. Fix first-run reports at the root, then work down the roadmap in `CASSIOPEIA.md` section 8.

@@ -1,6 +1,6 @@
 # Cassiopeia
 
-The desktop app that replaces the Streamlit front end. Version 0.1.0, written 16 November 2026 by Claude Fable 5.2. This file is the user guide, the honest status report and the roadmap.
+The desktop app that replaces the Streamlit front end. Version 0.2.0, written 16 and 17 November 2026 by Claude Fable 5.2. This file is the user guide, the honest status report and the roadmap.
 
 ## 1. Start it
 
@@ -17,8 +17,8 @@ A window opens (Chrome in app mode if Chrome is installed, otherwise your defaul
 | Open it without the terminal | Double-click `Cassiopeia.command` in Finder. First time: run `chmod +x Cassiopeia.command` |
 | Always running, starts at login | `bash scripts/install_cassiopeia.sh` once. It also adds a Cassiopeia app to `~/Applications` |
 | Undo that | `bash scripts/uninstall_cassiopeia.sh` |
-| The old dashboard (finance, health, university, inbox pages) | `streamlit run app.py`. Both use the same database |
-| Run the tests | `python -m pytest tests -q` (35 tests, about 10 seconds, no network) |
+| The old dashboard (health, markets, placements, tutoring, and connecting Google) | `streamlit run app.py`. Both use the same database |
+| Run the tests | `python -m pytest tests -q` (41 tests, about 10 seconds, no network) |
 
 No new packages are required. Optional: `pip install pypdf` to search inside PDFs, `pip install pywebview` for a native window without Chrome.
 
@@ -40,13 +40,21 @@ Cassiopeia cannot message anyone but you. `cassiopeia/notify.py` has no recipien
 
 | Section | What works now |
 |---|---|
-| Today | Greeting, latest briefing, seven-day schedule from every connected calendar plus events Cassiopeia planned, tasks, weather for Bath, headlines with each source's lean, screen time if enabled |
+| Today, Overview | Greeting, latest briefing, seven-day schedule from every connected calendar plus events Cassiopeia planned, tasks, weather for Bath, headlines with each source's lean, screen time if enabled |
+| Today, Calendar | Week grid from 07:00 to 23:00 across all calendars, overlapping events side by side, a free-time finder, and a form to plan events. Planned events stay in Cassiopeia. Google Calendar is never changed |
+| Today, Inbox | "Check for new mail" is free: rules sort it and Claude is not called. Claude reads an email only when you press Analyse or Draft a reply. Drafts are edited here and never sent |
+| Today, Money | Accounts and balances you enter, net worth with its trend, ISA and Lifetime ISA allowances, monthly budget, overdraft payoff plan. Nothing is invented: an account with no balance shows "not set" |
+| Today, University | Each module against the 75% target with the average needed on unmarked work, open assessments, the spaced lecture review queue, study time |
 | Talk | Chat with five modes (Cassiopeia, Planner, Scholar, Analyst, Scout). It can remember things, plan events, add tasks, text or email you, run protocols, search your vault, read a web page and draft simulations. "Start talking" runs a hands-free voice conversation |
 | Vault | Drag files in. They are filed as `vault/Area/Unit/Kind/` and indexed for search. Anything under Assessments is flagged so the assistant gives hints, not answers |
 | Lab | Sandbox: describe a simulation, read the script, press Run, see the charts. Trading lab: three daily patterns tested on two years of prices, then followed forward with £10,000 of test money per pattern |
-| Control | Protocols, message channels with a test button, what it remembers, job schedule, API budget, self-update |
+| Control | Protocols, message channels with a test button, triggers, what it remembers, job schedule, API budget, self-update |
 
-Scheduled jobs (while Cassiopeia is running): morning briefing 07:30, evening summary 21:30, overnight lab 02:15. Change the first two in `.env`. A job missed while the Mac slept runs on wake if it is still within a few hours.
+Scheduled jobs (while Cassiopeia is running): morning briefing 07:30, evening summary 21:30, overnight lab 02:15, a free mail check every 30 minutes, and the triggers every 5 minutes.
+
+Triggers tell you things without being asked: a task or assessment due today or tomorrow, an urgent email, an event starting in about 30 minutes. Each is announced once, as a Mac notification plus a text if texting is on. Nothing is sent during quiet hours (23:30 to 07:00, from `BEDTIME_TARGET`). Deadlines and emails found overnight are announced at 07:00. Switch each one on or off in Control. An email counts as urgent when Claude rated it high priority and needing action, or, if Claude has not read it, when the subject contains words such as "urgent", "deadline" or "interview".
+
+Briefing times: Change the first two in `.env`. A job missed while the Mac slept runs on wake if it is still within a few hours.
 
 ## 4. Protocols, smart home and the HomePod
 
@@ -64,7 +72,7 @@ HomePod direction (not built): a Siri shortcut on the HomePod can call Cassiopei
 
 ## 5. Honest status
 
-Tested on Linux (Python 3.13, headless Chrome): the 34 logic tests, every page rendered and screenshotted, server security checks, sandbox runs, backtest maths.
+Tested on Linux (Python 3.13, headless Chrome): all 41 tests, every page and tab rendered and screenshotted, server security checks, sandbox runs, backtest maths.
 
 Not tested, because it needs your Mac. Expect first-run fixes:
 
@@ -98,8 +106,8 @@ Not tested, because it needs your Mac. Expect first-run fixes:
 | # | Item | Notes |
 |---|---|---|
 | 1 | First run on the Mac and fix what breaks | Start with `python -m cassiopeia`, then voice, then one "Send test" |
-| 2 | Port the remaining classic pages (finance, health, university, inbox, placements) into the window | The data layer already exists in `database/` and `services/`. Only the pages need rebuilding in `cassiopeia/web/` |
-| 3 | Event-triggered workflows | A rule table: when X happens (new email from a .ac.uk address, deadline within 48 hours, price move over a threshold) do Y. The scheduler already ticks every 30 seconds |
+| 2 | Port the remaining classic pages (health, markets, placements, tutoring) and the Connect Google button into the window | Calendar, inbox, money and university are done. The data layer exists in `database/` and `services/`. Add a function to `cassiopeia/pages.py`, a route in `server.py`, a tab in `web/` |
+| 3 | More triggers, then rules you write yourself | Three fixed triggers exist in `cassiopeia/triggers.py`. Next: price moves on the watchlist, a placement deadline within a week, then a rule table Ben can edit |
 | 4 | Token login, then HomePod and phone access on the home network | Do not open the server beyond this Mac before this exists |
 | 5 | Agents that carry out multi-step jobs | Placement scan, weekly review, study planner. Reuse `brain.AGENTS` and add a step loop with a hard step limit |
 | 6 | Web form filling | Needs a browser automation tool and a confirm-before-submit screen. Never store passwords in the database |

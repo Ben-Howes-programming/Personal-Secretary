@@ -8,4 +8,4 @@ Run     : python -m cassiopeia          (from the project folder, venv active)
 Note    : Nothing in this package imports Streamlit. It reuses ai/, database/ and services/.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
