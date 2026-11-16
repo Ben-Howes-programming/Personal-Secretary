@@ -80,7 +80,11 @@ CLAUDE_CLI_TIMEOUT = 180                                  # seconds
 
 # Optional cost estimate. Fill in USD per million tokens from the pricing page,
 # e.g. {"claude-sonnet-5-5": (input_price, output_price)}. Empty means tokens only.
-PRICES_PER_MTOK = {}
+PRICES_PER_MTOK = {             # USD (input, output). Checked 16 Nov 2026. VERIFY at platform.claude.com/docs/en/about-claude/pricing
+    "claude-haiku-5-5": (0.10, 0.50),    # rate for prompts up to 100K tokens
+    "claude-sonnet-5-5": (2.00, 10.00),
+    "claude-opus-5-5": (4.00, 20.00),
+}
 
 CHAT_HISTORY_TURNS = 12          # only the last N messages are re-sent to Claude
 DAILY_TOKEN_BUDGET = 400_000     # soft limit; the app warns when you pass it
@@ -174,3 +178,42 @@ ICLOUD_USER = os.environ.get("ICLOUD_USER", "")
 ICLOUD_APP_PASSWORD = os.environ.get("ICLOUD_APP_PASSWORD", "")
 
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base")   # speech-to-text model size
+
+# ------------------------------------------------------------------
+# Cassiopeia: the desktop app in cassiopeia/ (added 16 Nov 2026).
+# Run with:  python -m cassiopeia
+# ------------------------------------------------------------------
+APP_NAME = "Cassiopeia"
+CASS_HOST = "127.0.0.1"          # this machine only: nothing else on the network can reach it
+CASS_PORT = int(os.environ.get("CASS_PORT", "8765"))
+VAULT_PATH = PROJECT_ROOT / "vault"        # your uploaded notes and assessments (not in Git)
+SANDBOX_PATH = PROJECT_ROOT / "sandbox"    # scratch folder for simulations (not in Git)
+
+# Messages to yourself. All off until switched on in .env. Cassiopeia can only ever
+# message OWNER_PHONE and your own Gmail address, never anyone else.
+OWNER_PHONE = os.environ.get("OWNER_PHONE", "")
+ENABLE_IMESSAGE = _flag("ENABLE_IMESSAGE")              # texts through the Messages app on this Mac
+ENABLE_EMAIL_TO_SELF = _flag("ENABLE_EMAIL_TO_SELF")    # needs a fresh Google login (adds gmail.send)
+if ENABLE_EMAIL_TO_SELF:
+    GOOGLE_SCOPES.append("https://www.googleapis.com/auth/gmail.send")
+ENABLE_ACTIVITY_TRACKING = _flag("ENABLE_ACTIVITY_TRACKING")   # samples the front app once a minute
+
+# Hard monthly ceiling on API-key spending. The Claude Pro route is not counted.
+# Dollars are treated as pounds when no exchange rate is cached, which over-counts on purpose.
+MONTHLY_API_BUDGET_GBP = float(os.environ.get("MONTHLY_API_BUDGET_GBP", "10"))
+
+MORNING_BRIEFING_AT = os.environ.get("MORNING_BRIEFING_AT", "07:30")
+EVENING_SUMMARY_AT = os.environ.get("EVENING_SUMMARY_AT", "21:30")
+OVERNIGHT_LAB_AT = "02:15"                 # backtests and the paper account update while you sleep
+
+WEATHER_PLACE = ("Bath", 51.381, -2.359)   # name, latitude, longitude
+
+# Trading lab. Test money only. LAB_COST_BPS is an ASSUMPTION: the cost of one buy plus one
+# sell, in hundredths of a percent. Replace it with your broker's real spread and fees.
+PAPER_START_CASH = 10_000.0
+LAB_COST_BPS = 10.0
+
+# Self-update: flags passed to the Claude Code CLI when Cassiopeia edits its own code on a branch.
+# VERIFY against `claude --help` on your Mac if a self-update fails to start.
+SELF_UPDATE_CLI_ARGS = ["--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Grep,Glob"]
+SELF_UPDATE_TIMEOUT = 900                  # seconds

@@ -95,10 +95,37 @@ def find_cli():
     return None
 
 
+def month_cost_gbp():
+    """Estimated API-key spend this calendar month in pounds. None when no prices are set."""
+    prices = getattr(config, "PRICES_PER_MTOK", {})
+    if not prices:
+        return None
+    start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
+    try:
+        rows = db.query("SELECT model, SUM(input_tokens) AS i, SUM(output_tokens) AS o FROM ai_usage "
+                        "WHERE backend = 'api' AND ts >= ? GROUP BY model", (start,))
+        fx_rows = db.cache_get("hist:GBPUSD=X", allow_stale=True) or {}
+    except Exception:
+        return 0.0
+    dearest = max(prices.values(), key=lambda pair: pair[1])   # unknown models are costed at the top rate
+    usd = sum((row["i"] or 0) / 1e6 * prices.get(row["model"], dearest)[0]
+              + (row["o"] or 0) / 1e6 * prices.get(row["model"], dearest)[1] for row in rows)
+    closes = fx_rows.get("closes") or []
+    dollars_per_pound = closes[-1][1] if closes else 1.0       # no rate cached: count $1 as £1 (over-counts)
+    return usd / dollars_per_pound
+
+
+def over_budget():
+    """True once this month's API spend has reached MONTHLY_API_BUDGET_GBP."""
+    cap = getattr(config, "MONTHLY_API_BUDGET_GBP", 0)
+    spent = month_cost_gbp()
+    return bool(cap) and spent is not None and spent >= cap
+
+
 def backend_order():
     """Backends to try, best first, given AI_BACKEND and what is actually available."""
     have_cli = bool(find_cli())
-    have_api = bool(config.ANTHROPIC_API_KEY)
+    have_api = bool(config.ANTHROPIC_API_KEY) and not over_budget()   # the cap switches the API route off
     if config.AI_BACKEND == "api":
         return ["api"] if have_api else []
     if config.AI_BACKEND == "claude_code":

@@ -7,7 +7,7 @@ Read this before changing anything. It is written for Claude models (Opus, Sonne
 A local, single-user Streamlit app for Ben Howes (second-year MPhys Physics with Astrophysics, University of Bath). It brings mail, calendar, tasks, money, markets, training and university work into one dashboard with a Claude assistant on top.
 
 - Runs on his MacBook Air (Apple Silicon), Python 3.14, venv at `.venv`, VS Code, GitHub repo `Ben-Howes-programming/Personal-Secretary`.
-- Local path: `~/Desktop/Programming/personal-secretary`. Run with `streamlit run app.py`.
+- Local path: `~/Developer/personal-secretary`. The desktop app is `python -m cassiopeia` (see section 12 and `CASSIOPEIA.md`). The older Streamlit dashboard still runs with `streamlit run app.py`.
 - Not deployed. One user. All data in `secretary.db` (SQLite) in the project root.
 - Ben wants a finished, working system. He does not want to study the code. Give him whole files to paste, exact terminal commands, and a commit message.
 
@@ -17,6 +17,7 @@ A local, single-user Streamlit app for Ben Howes (second-year MPhys Physics with
 |---|---|
 | 0.1 to 0.5 | Built with ChatGPT. One 900-line `app.py`, Gmail and Calendar read-only, Claude email triage, SQLite email cache, tutoring slots. Most pages were placeholders. `app.py` imported `chat_with_assistant` from `ai/claude.py`, which did not exist, so the snapshot of 7 Nov 2026 could not start |
 | 1.0 (16 Nov 2026) | Full rebuild by Claude Fable 5.2. Everything below describes 1.0 |
+| Cassiopeia 0.1 (16 Nov 2026) | Desktop app added beside the Streamlit pages by Claude Fable 5.2, on branch `cassiopeia`. See section 12 |
 
 ## 3. Architecture
 
@@ -66,7 +67,7 @@ Layering rule: `views` may import anything. `ui` may import `services`, `databas
 
 ## 4. Rules that must not be broken
 
-1. **Never send email.** The app may draft. `ENABLE_GMAIL_DRAFTS` only saves a draft into Gmail for Ben to send himself.
+1. **Never message anyone but Ben.** The app may draft replies to other people (`ENABLE_GMAIL_DRAFTS` saves a draft for Ben to send himself). The only sending code is `cassiopeia/notify.py`, which texts `OWNER_PHONE` and emails the signed-in Gmail address, both opt-in in `.env`. Never add a recipient argument to it.
 2. **Read-only by default.** Calendar writing and Gmail drafts are opt-in flags in `.env`. Do not add a new write scope without asking Ben first.
 3. **Secrets stay out of Git and out of code.** `.env`, `credentials.json`, `token.json`, `ms_token.json`, `secretary.db` are ignored. Never print or log their contents.
 4. **Never invent data.** Balances, marks, deadlines and health numbers come from Ben or from an API. Seed rows have names only. If a value is unknown, show "not set".
@@ -142,7 +143,7 @@ Ids for non-Gmail mail are prefixed `ms:` and `icloud:`.
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests -q            # 20 tests, about 2 seconds, no network
+python -m pytest tests -q            # 34 tests, about 3 seconds, no network
 streamlit run app.py                 # then click through the page you changed
 ```
 
@@ -173,3 +174,40 @@ streamlit run app.py                 # then click through the page you changed
 - Never invent facts or sources. Use `[placeholders]` he can fill in.
 - For changes: full replacement files, the terminal commands to get to the folder and venv, and a suggested commit message.
 - It is fine to assume reasonable things about him, but say what you assumed.
+
+## 12. Cassiopeia (the desktop app)
+
+Read `CASSIOPEIA.md` for the user guide, the list of what is untested, and the roadmap. Summary for whoever edits it next:
+
+```
+cassiopeia/
+  __main__.py     Starts database, server, scheduler, then a window (Chrome app mode, pywebview, or browser)
+  server.py       Standard-library HTTP server on 127.0.0.1:8765. GET and POST route tables near the top
+  brain.py        Chat. Claude requests actions as <action>{json}</action> lines; run_action() carries them out
+  briefing.py     Morning and evening briefings. Falls back to a rule-based text if Claude is unreachable
+  scheduler.py    Background loop. due() decides when a daily job runs. Optional activity sampling
+  notify.py       Mac notification, iMessage to OWNER_PHONE, email to the owner's own address. Nothing else
+  events.py       Merged calendar without Streamlit, plus locally planned events
+  vault.py        Uploaded files under vault/Area/Unit/Kind, indexed in SQLite for search
+  lab.py          Backtests and forward paper accounts. Test money only
+  sandbox.py      Claude-written simulation scripts, run only after Ben approves
+  protocols.py    One-command presets from protocols.json. Smart home goes through Apple Shortcuts
+  selfupdate.py   Self-modification on a git worktree branch through the Claude Code CLI, merged only on approval
+  store.py        All cass_* tables
+  weather.py      Open-Meteo
+  web/            index.html, app.css, app.js. Plain files, no build step
+```
+
+Rules specific to Cassiopeia, on top of section 4:
+
+1. The server stays on 127.0.0.1 until a token login exists. Keep the Host check and the `X-Cassiopeia` header check.
+2. Every POST route that changes or sends something goes in the `POST` table in `server.py`, never under `GET`.
+3. In `web/app.js`, text from the server passes through `esc()` or `markdown()` before it becomes HTML.
+4. A new action for the assistant needs three things: a line in `brain.ACTIONS`, a branch in `brain.run_action()`, and a test. Lookup actions go in `brain.LOOKUPS`. Keep the rule that nothing is changed or sent after `read_url`.
+5. No code path may place a real trade or move money. The lab reads prices and writes to `cass_backtests` and `cass_paper` only.
+6. Simulations and self-updates always wait for Ben's click. Do not add an auto-run or auto-merge option without his explicit request.
+7. Cassiopeia must not import Streamlit. Shared logic belongs in `database/`, `services/` or `ai/`.
+8. New tables are named `cass_*` and created in `store.SCHEMA` with `CREATE TABLE IF NOT EXISTS`.
+9. The design: indigo night `#141a3c`, vellum text `#efe6d2`, amber `#f2b33d`, Bricolage Grotesque headings, IBM Plex Sans body. The W of five stars in the header is the navigation and the one loud element. Keep everything else quiet. Sentence case, no all-caps labels, no em dashes.
+
+Status at hand-over: 15 Cassiopeia tests and the 19 core tests pass on Linux, and every page was rendered in headless Chrome. Nothing has run on Ben's Mac. Voice, iMessage, protocols, the login item and self-update are untested there. Fix first-run reports at the root, then work down the roadmap in `CASSIOPEIA.md` section 8.

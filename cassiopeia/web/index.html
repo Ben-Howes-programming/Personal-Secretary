@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cassiopeia</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%23141a3c%27/%3E%3Cpolyline points=%274,9 11,23 16,13 22,25 28,10%27 fill=%27none%27 stroke=%27%23f2b33d%27 stroke-width=%272.2%27/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="sky">
+  <div class="wordmark">Cassiopeia<span id="clock"></span></div>
+  <!-- The five bright stars of Cassiopeia, in their real W. Each star is a section. -->
+  <nav class="constellation" aria-label="Sections">
+    <svg viewBox="0 0 100 60" preserveAspectRatio="none" aria-hidden="true"><polyline points="4,14 27,44 50,24 73,50 96,18"/></svg>
+    <button class="star" style="left:4%;top:23%" data-view="today" title="Segin">Today</button>
+    <button class="star" style="left:27%;top:73%" data-view="talk" title="Ruchbah">Talk</button>
+    <button class="star" style="left:50%;top:40%" data-view="vault" title="Navi">Vault</button>
+    <button class="star" style="left:73%;top:83%" data-view="lab" title="Schedar">Lab</button>
+    <button class="star" style="left:96%;top:30%" data-view="control" title="Caph">Control</button>
+  </nav>
+  <div class="status" id="status" title="Claude connection"></div>
+</header>
+
+<main>
+  <section id="today" class="view">
+    <h1 id="greeting"></h1>
+    <div class="split">
+      <div>
+        <div class="panel">
+          <div class="panel-head"><h2>Briefing</h2>
+            <span><button class="quiet" data-brief="morning">Write morning briefing</button>
+            <button class="quiet" data-brief="evening">Write evening summary</button></span></div>
+          <div id="briefing" class="prose"></div>
+        </div>
+        <div class="panel"><h2>Next seven days</h2><div id="schedule"></div>
+          <form id="event-form" class="inline">
+            <input name="title" placeholder="Plan an event" required>
+            <input name="start" type="datetime-local" required aria-label="Start">
+            <button>Add event</button></form></div>
+        <div class="panel"><h2>Tasks</h2><div id="tasks"></div>
+          <form id="task-form" class="inline">
+            <input name="title" placeholder="Add a task" required>
+            <input name="due" type="date" aria-label="Due date">
+            <button>Add task</button></form></div>
+      </div>
+      <aside>
+        <div class="panel" id="weather"></div>
+        <div class="panel"><h2>Headlines</h2><div id="headlines" class="headlines"></div></div>
+        <div class="panel" id="activity-panel" hidden><h2>Screen time today</h2><div id="activity"></div></div>
+      </aside>
+    </div>
+  </section>
+
+  <section id="talk" class="view" hidden>
+    <div class="agents" id="agents"></div>
+    <div id="thread" class="thread" aria-live="polite"><p class="hint" id="starter">Try: "Plan my week around my deadlines", "Remember that my gym days are Monday, Wednesday and Friday", "Text me the top three tasks", or "Initiate focus protocol".</p></div>
+    <form id="chat-form" class="composer">
+      <button type="button" id="mic" class="mic" aria-pressed="false">Start talking</button>
+      <textarea name="text" rows="1" placeholder="Ask, plan, or say 'Initiate focus protocol'"></textarea>
+      <button>Send</button>
+    </form>
+    <label class="check"><input type="checkbox" id="speak"> Read replies aloud</label>
+    <p class="hint" id="voice-hint"></p>
+  </section>
+
+  <section id="vault" class="view" hidden>
+    <h1>Vault</h1>
+    <div class="panel drop" id="drop">
+      <p><strong>Drop notes, slides, problem sheets or assessments here</strong>, or <label class="link">choose files<input type="file" id="file-input" multiple hidden></label>.</p>
+      <p class="hint">Filed as Area / Unit / Kind. Leave these on Auto and the file name decides.</p>
+      <div class="inline"><select id="up-area"></select><select id="up-unit"></select><select id="up-kind"></select></div>
+      <div id="upload-log" class="hint"></div>
+    </div>
+    <form id="vault-search" class="inline"><input name="q" placeholder="Search inside your files"><button>Search</button></form>
+    <div id="vault-results"></div>
+    <div id="vault-tree"></div>
+  </section>
+
+  <section id="lab" class="view" hidden>
+    <h1>Lab</h1>
+    <div class="panel">
+      <div class="panel-head"><h2>Simulation sandbox</h2></div>
+      <form id="sim-form" class="inline"><input name="prompt" placeholder="Run a simulation on... e.g. a damped pendulum with three damping values" required><button>Draft script</button></form>
+      <div id="sims"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>Trading lab, test money only</h2><button class="quiet" id="lab-run">Run the lab now</button></div>
+      <p class="hint" id="lab-note"></p>
+      <div id="lab-tables"></div>
+    </div>
+  </section>
+
+  <section id="control" class="view" hidden>
+    <h1>Control</h1>
+    <div class="split even">
+      <div>
+        <div class="panel"><h2>Protocols</h2><div id="protocols"></div><div id="protocol-log" class="hint"></div></div>
+        <div class="panel"><h2>Messages to you</h2><div id="channels"></div><div id="outbox"></div></div>
+        <div class="panel"><h2>What I remember</h2>
+          <form id="memory-form" class="inline"><input name="text" placeholder="Tell me something to remember" required><button>Remember</button></form>
+          <div id="memories"></div></div>
+      </div>
+      <div>
+        <div class="panel"><h2>Schedule</h2><div id="jobs"></div></div>
+        <div class="panel"><h2>Claude and budget</h2><div id="budget"></div></div>
+        <div class="panel"><h2>Update yourself</h2>
+          <p class="hint">Cassiopeia edits its own code on a separate branch, runs the tests and shows you the changes. Nothing is merged until you approve.</p>
+          <form id="update-form" class="inline"><input name="instruction" placeholder="Describe the change you want" required><button>Propose change</button></form>
+          <div id="updates"></div></div>
+      </div>
+    </div>
+  </section>
+</main>
+<div id="toast" role="status"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

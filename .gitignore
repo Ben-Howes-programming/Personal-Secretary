@@ -16,3 +16,9 @@ __pycache__/
 .DS_Store
 .vscode/
 *.zip
+
+# Cassiopeia: your files, scratch space and logs
+vault/
+sandbox/
+*.log
+.cass_worktrees/

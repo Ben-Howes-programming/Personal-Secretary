@@ -16,3 +16,5 @@ yfinance
 # caldav            # iCloud calendar
 # faster-whisper    # voice input, transcribed on your Mac
 # pytest            # to run the tests
+# pywebview         # Cassiopeia in its own native window when Chrome is not installed
+# pypdf             # lets the Cassiopeia vault search inside PDFs

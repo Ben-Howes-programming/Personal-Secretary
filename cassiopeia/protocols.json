@@ -1,0 +1,24 @@
+{
+  "focus": {
+    "about": "Lights down, ambient sound on, distractions off, top task read out.",
+    "steps": [
+      {"do": "shortcut", "value": "Cassiopeia Focus"},
+      {"do": "open_url", "value": "[link to your ambient sound or playlist]"},
+      {"do": "top_task"}
+    ]
+  },
+  "movie": {
+    "about": "Room dimmed, TV on, phone silenced.",
+    "steps": [
+      {"do": "shortcut", "value": "Cassiopeia Movie"},
+      {"do": "say", "value": "Movie protocol running. Enjoy."}
+    ]
+  },
+  "wind-down": {
+    "about": "Screens dimmed and a nudge towards bed.",
+    "steps": [
+      {"do": "shortcut", "value": "Cassiopeia Wind Down"},
+      {"do": "say", "value": "Winding down. Sleep is when the gym work pays off."}
+    ]
+  }
+}
