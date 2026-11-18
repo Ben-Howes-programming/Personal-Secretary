@@ -27,10 +27,11 @@ def _store(email, analysis, analysed_by):
     db.save_email(email)
 
 
-def sync(gmail_service=None, analyse=True):
+def sync(gmail_service=None, analyse=True, query=None, limit=None):
     """Fetch new mail from every connected account and analyse what needs it.
 
     Returns counts for the status line: new, by_rules, by_claude, pending, errors.
+    query and limit override config.GMAIL_QUERY and config.MAX_EMAILS (used for a one-off catch-up).
     """
     stats = {"new": 0, "by_rules": 0, "by_claude": 0, "pending": 0, "errors": []}
     fresh = []
@@ -38,7 +39,7 @@ def sync(gmail_service=None, analyse=True):
     # 1. Gmail
     if gmail_service is not None:
         try:
-            for message_id in gmail.list_message_ids(gmail_service, config.GMAIL_QUERY, config.MAX_EMAILS):
+            for message_id in gmail.list_message_ids(gmail_service, query or config.GMAIL_QUERY, limit or config.MAX_EMAILS):
                 if not db.email_is_cached(message_id):
                     fresh.append(gmail.get_email(gmail_service, message_id))
         except Exception as error:

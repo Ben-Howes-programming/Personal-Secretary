@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 import config
 from ai import claude, voice
-from cassiopeia import (brain, briefing, events, lab, notify, pages, protocols, sandbox, scheduler, selfupdate,
+from cassiopeia import (access, accounts, brain, more_pages, briefing, events, lab, notify, pages, protocols, sandbox, scheduler, selfupdate,
                         store, triggers, vault, weather)
 from database import database as db
 from database import tasks, university
@@ -50,7 +50,7 @@ def get_state(_q):
         "tasks": tasks.group_tasks(tasks.list_tasks()),
         "briefings": store.latest_briefings(2),
         "inbox_waiting": sum(1 for e in db.list_emails(120, include_done=False)
-                             if e["analysis"]["action_required"] or pages.is_urgent(e)),
+                             if pages.needs_action(e)),
         "ai": claude.backend_status(),
         "budget": {"spent_gbp": spent, "cap_gbp": config.MONTHLY_API_BUDGET_GBP, "over": claude.over_budget()},
         "jobs": store.jobs(),
@@ -97,6 +97,11 @@ GET = {
     "/api/inbox": lambda q: pages.inbox_list(q.get("show", "open")),
     "/api/triggers": lambda q: triggers.status(),
     "/api/money": lambda q: pages.money(),
+    "/api/google": lambda q: accounts.google_status(),
+    "/api/health": lambda q: more_pages.health_page(q.get("next") == "1"),
+    "/api/markets": lambda q: more_pages.markets_page(int(q.get("days", 130))),
+    "/api/placements": lambda q: more_pages.placements_page(),
+    "/api/tutoring": lambda q: more_pages.tutoring_page(),
     "/api/university": lambda q: pages.university_page(),
 }
 
@@ -109,6 +114,18 @@ def need(body, *names):
     if missing:
         raise Problem("Missing: " + ", ".join(missing))
     return [body[n] for n in names]
+
+
+def siri(body):
+    """For a Siri Shortcut on a HomePod or iPhone: text in, plain speakable text out."""
+    from ai import voice
+    text = str(body.get("text", "")).strip()
+    if not text:
+        raise Problem("Send JSON like {\"text\": \"what is on today\"}.")
+    key = "cass_siri_conversation:" + events.now().date().isoformat()     # one running conversation per day
+    result = brain.chat(text, db.get_setting(key), "cassiopeia")
+    db.set_setting(key, result["conversation_id"])
+    return {"reply": voice.plain_text(result["reply"])[:900], "actions": [a["detail"] for a in result["actions"]]}
 
 
 def post_chat(body, q, raw):
@@ -177,14 +194,27 @@ POST = {
     "/api/updates/reject": guarded(lambda b: selfupdate.reject(int(b["id"]))),
     "/api/calendar/free": guarded(lambda b: pages.free_time(b.get("day"), b.get("start", "09:00"), b.get("end", "18:00"), b.get("minutes", 60))),
     "/api/inbox/sync": guarded(lambda b: pages.inbox_sync(analyse=bool(b.get("analyse")))),
+    "/api/inbox/catch-up": guarded(lambda b: pages.catch_up(b.get("days"))),
+    "/api/inbox/archive-older": guarded(lambda b: pages.archive_older(b.get("days", 30))),
     "/api/inbox/analyse": guarded(lambda b: pages.analyse_one(b["id"])),
     "/api/inbox/draft": guarded(lambda b: pages.draft_reply(b["id"])),
     "/api/inbox/save-draft": guarded(lambda b: pages.save_draft(b["id"], b.get("text", ""), bool(b.get("to_gmail")))),
     "/api/inbox/discard-draft": guarded(lambda b: pages.discard_draft(b["id"])),
     "/api/inbox/done": guarded(lambda b: pages.set_done(b["id"], bool(b.get("done", True)))),
+    "/api/siri": guarded(lambda b: siri(b)),
+    "/api/access/rotate": lambda b, q, r: {"token": access.rotate()},
+    "/api/google/connect": guarded(lambda b: accounts.connect_google(bool(b.get("force")))),
+    "/api/health/update": guarded(lambda b: more_pages.health_update(b.get("action"), b)),
+    "/api/health/review": guarded(lambda b: more_pages.health_review()),
+    "/api/markets/update": guarded(lambda b: more_pages.markets_update(b.get("action"), b)),
+    "/api/markets/refresh": guarded(lambda b: more_pages.markets_page(int(b.get("days", 130)), force=True)),
+    "/api/markets/note": guarded(lambda b: more_pages.study_note(str(b.get("symbol", "")))),
+    "/api/placements/update": guarded(lambda b: more_pages.placements_update(b.get("action"), b)),
     "/api/money/update": guarded(lambda b: pages.money_update(b.get("action"), b)),
     "/api/university/update": guarded(lambda b: pages.university_update(b.get("action"), b)),
     "/api/triggers/set": guarded(lambda b: triggers.set_enabled(b.get("kind"), b.get("on")) or triggers.status()),
+    "/api/rules/add": guarded(lambda b: triggers.add_rule(b.get("name"), b.get("metric"), b.get("op"), b.get("threshold"), b.get("subject")) and triggers.status()),
+    "/api/rules/remove": guarded(lambda b: triggers.remove_rule(b["id"]) or triggers.status()),
     "/api/triggers/check": lambda b, q, r: {"sent": triggers.check()},
     "/api/test-message": post_test_message,
     "/api/voice/transcribe": post_transcribe,
@@ -234,20 +264,50 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def local_only(self):
-        """Refuse requests that reached this port under another site's name (DNS rebinding)."""
-        host = (self.headers.get("Host") or "").rsplit(":", 1)[0]
-        if host in ("127.0.0.1", "localhost"):
+    def allowed(self, path):
+        """This Mac, or another device with the access token. See cassiopeia/access.py."""
+        ok, reason = access.check(self.client_address[0], self.headers, path)
+        if ok:
             return True
-        self.reply(403, {"error": "Cassiopeia only answers on this computer."})
+        if self.command == "GET" and path in ("/", "/index.html"):        # a phone browser: send it to sign in
+            self.reply(303, b"", "text/plain", {"Location": "/login"})
+            return False
+        self.reply(403, {"error": reason})
         return False
 
+    def is_local(self):
+        return access.is_loopback(self.client_address[0]) and access.host_name(self.headers) in access.LOCAL_NAMES
+
+    def login(self, method):
+        """The sign-in page for phones and other devices on the home network."""
+        if not config.ENABLE_LAN_ACCESS and not self.is_local():
+            return self.reply(403, {"error": "Cassiopeia only answers on this computer."})
+        message = "Enter the access token shown in Control on your Mac."
+        if method == "POST":
+            client = self.client_address[0]
+            length = min(int(self.headers.get("Content-Length") or 0), 4096)
+            entered = parse_qs(self.rfile.read(length).decode("utf-8", "ignore")).get("token", [""])[0].strip()
+            if access.locked_out(client):
+                message = "Too many wrong tokens. Try again in ten minutes."
+            elif access.token_ok(entered):
+                cookie = f"{access.COOKIE}={entered}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"
+                return self.reply(303, b"", "text/plain", {"Location": "/", "Set-Cookie": cookie})
+            else:
+                access.record_failure(client)
+                message = "That token was not right."
+        page = access.LOGIN_PAGE.format(message=message).encode()
+        self.reply(200, page, "text/html; charset=utf-8")
+
     def do_GET(self):
-        if not self.local_only():
-            return
         url = urlparse(self.path)
+        if url.path == "/login":
+            return self.login("GET")
+        if not self.allowed(url.path):
+            return
         query = {key: values[0] for key, values in parse_qs(url.query).items()}
         try:
+            if url.path == "/api/access":
+                return self.reply(200, access.status(include_token=self.is_local()))
             if url.path in GET:
                 return self.reply(200, GET[url.path](query))
             if url.path == "/api/vault/file":
@@ -266,11 +326,15 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(500, {"error": f"{type(problem).__name__}: {str(problem)[:300]}"})
 
     def do_POST(self):
-        if not self.local_only():
-            return
-        if self.headers.get("X-Cassiopeia") != "1":
-            return self.reply(403, {"error": "Missing X-Cassiopeia header."})
         url = urlparse(self.path)
+        if url.path == "/login":
+            return self.login("POST")
+        if not self.allowed(url.path):
+            return
+        # A page on another website cannot add this header. A Siri Shortcut sends a Bearer token instead.
+        bearer = (self.headers.get("Authorization") or "").lower().startswith("bearer ")
+        if self.headers.get("X-Cassiopeia") != "1" and not bearer:
+            return self.reply(403, {"error": "Missing X-Cassiopeia header."})
         query = {key: values[0] for key, values in parse_qs(url.query).items()}
         length = int(self.headers.get("Content-Length") or 0)
         if length > MAX_UPLOAD:
@@ -294,7 +358,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def start(port=None):
     """Start the server on a background thread. Returns the server (call .shutdown() to stop)."""
-    server = ThreadingHTTPServer((config.CASS_HOST, config.CASS_PORT if port is None else port), Handler)
+    server = ThreadingHTTPServer((access.bind_host(), config.CASS_PORT if port is None else port), Handler)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, name="cassiopeia-server", daemon=True).start()
     return server

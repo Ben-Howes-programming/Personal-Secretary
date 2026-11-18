@@ -186,6 +186,9 @@ WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base")   # speech-to-text model
 APP_NAME = "Cassiopeia"
 CASS_HOST = "127.0.0.1"          # this machine only: nothing else on the network can reach it
 CASS_PORT = int(os.environ.get("CASS_PORT", "8765"))
+# Reach Cassiopeia from your phone or a Siri Shortcut on the home Wi-Fi. Needs the access token
+# shown in Control. Plain HTTP, so home networks only. Off unless set in .env.
+ENABLE_LAN_ACCESS = _flag("ENABLE_LAN_ACCESS")
 VAULT_PATH = PROJECT_ROOT / "vault"        # your uploaded notes and assessments (not in Git)
 SANDBOX_PATH = PROJECT_ROOT / "sandbox"    # scratch folder for simulations (not in Git)
 
@@ -205,6 +208,8 @@ MONTHLY_API_BUDGET_GBP = float(os.environ.get("MONTHLY_API_BUDGET_GBP", "10"))
 MORNING_BRIEFING_AT = os.environ.get("MORNING_BRIEFING_AT", "07:30")
 EVENING_SUMMARY_AT = os.environ.get("EVENING_SUMMARY_AT", "21:30")
 OVERNIGHT_LAB_AT = "02:15"                 # backtests and the paper account update while you sleep
+INBOX_ACTION_DAYS = 21                     # "Needs action" only shows mail newer than this
+CATCH_UP_DAYS = 75                         # one-off catch-up after a long gap, rules only (free)
 QUIET_HOURS = (BEDTIME_TARGET, "07:00")     # no unprompted texts or notifications between these times
 
 WEATHER_PLACE = ("Bath", 51.381, -2.359)   # name, latitude, longitude

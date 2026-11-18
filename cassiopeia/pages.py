@@ -89,9 +89,24 @@ def sender_name(sender):
     return (sender or "Unknown").split("<")[0].strip().strip('"') or (sender or "Unknown")
 
 
+def is_recent(email, days=None):
+    days = config.INBOX_ACTION_DAYS if days is None else days
+    import time
+    return (email.get("received_ts") or 0) >= time.time() - days * 86400
+
+
+def needs_action(email):
+    """Shown under "Needs action": recent, not from the old app, and flagged or urgent."""
+    if email.get("analysed_by") == "legacy" or not is_recent(email):
+        return False
+    return bool(email["analysis"]["action_required"]) or is_urgent(email)
+
+
 def is_urgent(email):
     """Worth an unprompted text? Claude's verdict if there is one, otherwise a cautious word rule."""
     analysis = email["analysis"]
+    if email.get("analysed_by") == "legacy":         # flags from version 0.5 are not trusted
+        return False
     if email.get("analysed_by") == "claude":
         return analysis["priority"] == "High" and analysis["action_required"]
     if email.get("analysed_by") == "rules":          # the rules only ever file bulk mail
@@ -104,7 +119,7 @@ def shape_email(email):
             "subject": email.get("subject") or "(no subject)", "received_ts": email.get("received_ts"),
             "analysis": email["analysis"], "analysed_by": email.get("analysed_by") or "pending",
             "status": email["status"], "draft_reply": email.get("draft_reply"), "provider": email.get("provider"),
-            "urgent": is_urgent(email), "body": (email.get("body") or "")[:2500]}
+            "urgent": is_urgent(email), "needs_action": needs_action(email), "recent": is_recent(email), "body": (email.get("body") or "")[:2500]}
 
 
 def inbox_list(show="open"):
@@ -112,10 +127,12 @@ def inbox_list(show="open"):
     rows = [shape_email(e) for e in db.list_emails(120, include_done=(show != "open"))]
     if show == "done":
         rows = [r for r in rows if r["status"] == "completed"]
-    rows.sort(key=lambda r: (not (r["analysis"]["action_required"] or r["urgent"]),
+    rows.sort(key=lambda r: (not r["needs_action"],
                              PRIORITY_ORDER.get(r["analysis"]["priority"], 3), -(r["received_ts"] or 0)))
     since = inbox.minutes_since_sync()
-    return {"emails": rows, "pending": len(db.pending_emails(500)),
+    newest = max((r["received_ts"] or 0 for r in rows), default=None)
+    return {"emails": rows, "pending": len(db.pending_emails(500)), "newest_ts": newest or None,
+            "action_days": config.INBOX_ACTION_DAYS, "catch_up": db.get_setting("cass_catch_up"),
             "minutes_since_sync": None if since is None else round(since),
             "connected": gmail_service() is not None, "claude": claude.is_available(),
             "gmail_drafts": config.ENABLE_GMAIL_DRAFTS, "analyse_cap": config.MAX_AI_EMAILS_PER_SYNC}
@@ -125,8 +142,29 @@ def inbox_sync(analyse=False):
     """Fetch new mail. analyse=False costs nothing. analyse=True also sends pending mail to Claude."""
     service = gmail_service()
     if service is None:
-        raise RuntimeError("Google is not connected. Connect it from the classic dashboard's Settings page first.")
+        raise RuntimeError("Google is not connected. Press Connect Google in Control.")
     return inbox.sync(service, analyse=analyse)
+
+
+def catch_up(days=None):
+    """Fetch up to 150 emails from the last few weeks with the free rules only. Run once after a long gap."""
+    import time
+    days = days or config.CATCH_UP_DAYS
+    service = gmail_service()
+    if service is None:
+        raise RuntimeError("Google is not connected. Press Connect Google in Control.")
+    stats = inbox.sync(service, analyse=False, query=f"in:inbox newer_than:{int(days)}d", limit=150)
+    db.set_setting("cass_catch_up", {"ts": time.time(), "days": days, "new": stats["new"], "errors": stats["errors"]})
+    return stats
+
+
+def archive_older(days=30):
+    """Mark open emails older than `days` as done. They stay stored and searchable under Done."""
+    import time
+    cutoff = time.time() - int(days) * 86400
+    count = db.query("SELECT COUNT(*) AS n FROM emails WHERE status != 'completed' AND COALESCE(received_ts, 0) < ?", (cutoff,))[0]["n"]
+    db.execute("UPDATE emails SET status = 'completed' WHERE status != 'completed' AND COALESCE(received_ts, 0) < ?", (cutoff,))
+    return {"archived": count}
 
 
 def _email(email_id):

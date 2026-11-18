@@ -295,6 +295,7 @@ def test_triggers_fire_once_and_respect_quiet_hours(monkeypatch):
     from database import tasks
     noon = datetime(2026, 11, 17, 12, 0, tzinfo=events.ZONE)
     monkeypatch.setattr(events, "now", lambda: noon)
+    triggers.set_enabled("price", False)                                     # no network in tests
     tasks.add_task("Submit ESA application", due="2026-11-18")
     tasks.add_task("Far away", due="2026-12-25")
     store.add_event("Problem class", "2026-11-17T12:25:00")
@@ -352,3 +353,148 @@ def test_university_page_tracks_the_target():
     assert page["study_total"] == 90
     with pytest.raises(ValueError):
         pages.university_update("mark", {"id": coursework["id"], "mark": "140"})
+
+
+# Inbox fix (18 Nov): legacy flags and recent-only "Needs action" ------------
+def test_old_flags_no_longer_crowd_needs_action():
+    import time
+    from cassiopeia import pages, store
+    from database import database as db
+    stored_email("old", "Old flagged email", analysed_by="claude", priority="High", action=True)
+    db.execute("UPDATE emails SET analysed_by = NULL, received_ts = ? WHERE id = 'old'", (time.time() - 60 * 86400,))
+    stored_email("new", "Lab report feedback", analysed_by="claude", priority="High", action=True)
+    store.initialise()                                                      # the start-up migration marks version 0.5 rows
+    rows = {m["id"]: m for m in pages.inbox_list()["emails"]}
+    assert rows["old"]["analysed_by"] == "legacy" and not rows["old"]["needs_action"] and not rows["old"]["urgent"]
+    assert rows["new"]["needs_action"]
+    assert pages.archive_older(30) == {"archived": 1}
+    assert [m["id"] for m in pages.inbox_list()["emails"]] == ["new"]
+
+
+def test_google_status_never_reveals_the_token(tmp_path, monkeypatch):
+    from cassiopeia import accounts
+    monkeypatch.setattr(config, "GOOGLE_CREDENTIALS_PATH", tmp_path / "credentials.json")
+    monkeypatch.setattr(config, "GOOGLE_TOKEN_PATH", tmp_path / "token.json")
+    assert accounts.google_status()["state"] == "no client file"
+    (tmp_path / "credentials.json").write_text("{}")
+    assert accounts.google_status()["state"] == "not connected"
+    (tmp_path / "token.json").write_text('{"token": "SECRET", "refresh_token": "SECRET", "scopes": %s}' % json.dumps(config.GOOGLE_SCOPES))
+    status = accounts.google_status()
+    assert status["state"] == "connected" and "read Gmail" in status["can"] and "SECRET" not in json.dumps(status)
+
+
+# Health, markets, placements, tutoring -------------------------------------
+def test_health_tab_logs_and_plans(monkeypatch):
+    from cassiopeia import events, more_pages, store
+    monkeypatch.setattr(events, "now", lambda: datetime(2026, 11, 18, 9, 0, tzinfo=events.ZONE))
+    page = more_pages.health_update("sleep", {"night": "2026-11-18", "bed": "23:40", "wake": "07:40", "quality": "4"})
+    assert page["sleep"]["nights"] == 1 and page["sleep"]["average"] == pytest.approx(8.0)
+    more_pages.health_update("workout", {"kind": "run", "title": "Easy run", "minutes": "30", "distance": "5", "date": "2026-11-17"})
+    page = more_pages.health_update("lift", {"exercise": "Bench press", "weight": "60", "reps": "10", "sets": "3"})
+    assert page["this_week"]["runs"] == 1
+    assert page["exercises"][0]["next"]["weight_kg"] == 62.5                     # top of the range: add 2.5 kg
+    assert len(page["plan"]) == 7 and any(d["start"] for d in page["plan"])      # sessions get times in an empty week
+    page = more_pages.health_update("plan-settings", {"gym_days": "3", "run_days": "1", "train_time": "morning"})
+    assert (page["gym_days"], page["run_days"], page["train_time"]) == (3, 1, "morning")
+    added = more_pages.plan_to_calendar()["added"]
+    assert added > 0 and more_pages.plan_to_calendar()["added"] == 0            # no duplicates on a second press
+    with pytest.raises(ValueError):
+        more_pages.health_update("workout", {"kind": "swim"})
+
+
+def test_markets_tab_with_stub_prices(monkeypatch):
+    from cassiopeia import more_pages
+    from services import market, news
+    closes = [[f"2026-{m:02d}-{d:02d}", 100 + i] for i, (m, d) in enumerate((m, d) for m in range(1, 12) for d in range(1, 26))]
+    history = {"symbol": "X", "currency": "GBP", "closes": closes, "stale": False, "error": None}
+    monkeypatch.setattr(market, "get_history", lambda symbol, force=False: dict(history, symbol=symbol))
+    monkeypatch.setattr(market, "get_many", lambda symbols, force=False: {s: dict(history, symbol=s) for s in symbols})
+    monkeypatch.setattr(news, "get_news", lambda *a, **k: [{"title": "Quantum computing shares rally", "link": "https://example.org", "source": "FT"}])
+    page = more_pages.markets_page()
+    wqtm = next(f for f in page["funds"] if f["symbol"] == "WQTM.L")
+    assert wqtm["figures"]["ok"] and wqtm["news"][0]["title"].startswith("Quantum")
+    assert page["chart"] and page["chart"][0]["value"] == pytest.approx(100)    # rebased to 100
+    page = more_pages.markets_update("paper-buy", {"symbol": "VWRP.L", "amount": "500", "thesis": "Learning how a global fund moves"})
+    assert page["trades"][0]["value_now"] == pytest.approx(500)
+    with pytest.raises(ValueError):
+        more_pages.markets_update("paper-buy", {"symbol": "VWRP.L", "amount": "500", "thesis": ""})
+
+
+def test_placements_and_tutoring_tabs(monkeypatch):
+    from cassiopeia import events, more_pages, store
+    monkeypatch.setattr(events, "now", lambda: datetime(2026, 11, 18, 9, 0, tzinfo=events.ZONE))
+    page = more_pages.placements_update("add", {"organisation": "ESA", "role": "Student internship", "deadline": "2026-11-30",
+                                                "link": "https://www.esa.int"})
+    esa = page["placements"][0]
+    assert esa["days_left"] == 12 and esa["urgent"] and page["next"]["organisation"] == "ESA"
+    page = more_pages.placements_update("update", {"id": esa["id"], "status": "Applied", "notes": "Sent", "deadline": "2026-11-30"})
+    assert page["counts"]["applied"] == 1 and not page["placements"][0]["urgent"]
+    with pytest.raises(ValueError):
+        more_pages.placements_update("add", {"organisation": "X", "link": "javascript:alert(1)"})
+    store.add_event("Football", "2026-11-22T13:00:00", "2026-11-22T15:00:00")          # Sunday is the tutoring day
+    sunday = more_pages.tutoring_page()["days"][0]
+    assert sunday["day"].startswith("Sunday 22") and sunday["slots"] == ["12:00", "15:00", "16:00", "17:00"]
+
+
+def test_placement_price_and_custom_rule_triggers(monkeypatch):
+    from cassiopeia import events, triggers
+    from database import tasks
+    from services import market
+    noon = datetime(2026, 11, 18, 12, 0, tzinfo=events.ZONE)
+    monkeypatch.setattr(events, "now", lambda: noon)
+    closes = [["2026-11-16", 100.0], ["2026-11-17", 95.0]]                    # a 5% fall
+    monkeypatch.setattr(market, "get_history", lambda symbol, force=False: {"symbol": symbol, "currency": "GBP", "closes": closes})
+    monkeypatch.setattr(market, "gbpusd_rate", lambda force=False: 1.3)
+    tasks.add_placement("ESA", "Internship", deadline="2026-11-23")
+    tasks.add_placement("CERN", "Technical student", deadline="2026-11-20", status="Applied")   # applied: no nagging
+    triggers.add_rule("World fund dip", "price_day", "below", -2, "vwrp.l")
+    triggers.add_rule("Too many tasks", "open_tasks", "above", 5)
+    with pytest.raises(ValueError):
+        triggers.add_rule("Bad", "price_day", "below", -2)                    # needs a symbol
+    sent = triggers.check(noon)
+    assert "ESA closes in 5 days (2026-11-23) and is still marked Researching" in sent
+    assert not any("CERN" in m for m in sent)
+    assert sum("moved -5.0%" in m for m in sent) == 3                          # all three funds held, same stub price
+    assert any(m.startswith("Rule 'World fund dip': VWRP.L is -5.00, below -2") for m in sent)
+    assert not any("Too many tasks" in m for m in sent)
+    assert triggers.check(noon) == []                                          # once a day at most
+    assert triggers.status()["rules"][0]["last_value"] == pytest.approx(-5.0)
+
+
+# Home network access ---------------------------------------------------------
+def test_other_devices_need_the_token(site, monkeypatch):
+    from cassiopeia import access, brain
+    lan = {"Host": "192.168.1.23:8765"}                                       # looks like a phone on the Wi-Fi
+    assert call(site + "/api/state", headers=lan)[0] == 403                   # LAN access is off by default
+    monkeypatch.setattr(config, "ENABLE_LAN_ACCESS", True)
+    assert call(site + "/api/state", headers=lan)[0] == 403                   # on, but no token
+    token = access.token()
+    assert call(site + "/api/state", headers={**lan, "Authorization": "Bearer wrong"})[0] == 403
+    assert call(site + "/api/state", headers={**lan, "Authorization": f"Bearer {token}"})[0] == 200
+    assert call(site + "/api/state", headers={**lan, "Cookie": f"cass_token={token}"})[0] == 200
+    # The token itself is only ever shown to the Mac
+    assert json.loads(call(site + "/api/access", headers={**lan, "Authorization": f"Bearer {token}"})[1])["token"] is None
+    assert json.loads(call(site + "/api/access")[1])["token"] == token
+    # Dangerous actions stay on the Mac even with the token
+    auth = {**lan, "Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    assert call(site + "/api/updates/propose", b'{"instruction": "x"}', auth)[0] == 403
+    # Siri: text in, plain text out
+    monkeypatch.setattr(brain, "chat", lambda text, cid, agent: {"conversation_id": 7, "reply": "**Two** lectures today.", "actions": []})
+    status, raw = call(site + "/api/siri", b'{"text": "what is on today"}', auth)
+    assert status == 200 and json.loads(raw)["reply"] == "Two lectures today."
+    # The sign-in page sets a cookie for the right token only
+    login = {**lan, "Content-Type": "application/x-www-form-urlencoded"}
+    assert b"not right" in call(site + "/login", b"token=nope", login)[1]
+    rotated = access.rotate()
+    assert rotated != token and call(site + "/api/state", headers={**lan, "Authorization": f"Bearer {token}"})[0] == 403
+
+
+def test_wrong_tokens_lock_an_address_out(monkeypatch):
+    from cassiopeia import access
+    monkeypatch.setattr(config, "ENABLE_LAN_ACCESS", True)
+    headers = {"Host": "192.168.1.23", "Authorization": "Bearer wrong"}
+    for _ in range(access.MAX_FAILURES):
+        access.check("192.168.1.50", headers, "/api/state")
+    good = {"Host": "192.168.1.23", "Authorization": f"Bearer {access.token()}"}
+    assert access.check("192.168.1.50", good, "/api/state") == (False, "Too many wrong tokens. Try again in ten minutes.")
+    assert access.check("192.168.1.51", good, "/api/state")[0] is True                 # other devices unaffected

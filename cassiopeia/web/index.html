@@ -32,7 +32,11 @@
       <button data-tab="calendar" aria-pressed="false">Calendar</button>
       <button data-tab="inbox" aria-pressed="false">Inbox<span id="inbox-count"></span></button>
       <button data-tab="money" aria-pressed="false">Money</button>
+      <button data-tab="markets" aria-pressed="false">Markets</button>
       <button data-tab="university" aria-pressed="false">University</button>
+      <button data-tab="placements" aria-pressed="false">Placements</button>
+      <button data-tab="tutoring" aria-pressed="false">Tutoring</button>
+      <button data-tab="health" aria-pressed="false">Health</button>
     </div>
     <div id="tab-overview" class="tab">
     <div class="split">
@@ -92,6 +96,10 @@
 
     <div id="tab-money" class="tab" hidden></div>
     <div id="tab-university" class="tab" hidden></div>
+    <div id="tab-markets" class="tab" hidden></div>
+    <div id="tab-placements" class="tab" hidden></div>
+    <div id="tab-tutoring" class="tab" hidden></div>
+    <div id="tab-health" class="tab" hidden></div>
 
     <div id="tab-inbox" class="tab" hidden>
       <div class="panel">
@@ -152,6 +160,8 @@
     <div class="split even">
       <div>
         <div class="panel"><h2>Protocols</h2><div id="protocols"></div><div id="protocol-log" class="hint"></div></div>
+        <div class="panel"><div class="panel-head"><h2>Google</h2><button class="quiet" id="google-connect">Connect Google</button></div><div id="google"></div></div>
+        <div class="panel"><h2>Phone and HomePod</h2><div id="access"></div></div>
         <div class="panel"><h2>Messages to you</h2><div id="channels"></div><div id="outbox"></div></div>
         <div class="panel"><div class="panel-head"><h2>Tell me without being asked</h2><button class="quiet" id="trigger-check">Check now</button></div>
           <div id="triggers"></div></div>

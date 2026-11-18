@@ -83,8 +83,18 @@ def background_mail_check():
     return f"{stats['new']} new"
 
 
+def first_run_catch_up():
+    """Once only: fetch the weeks of mail missed while the app was not running. Free (rules only)."""
+    if db.get_setting("cass_catch_up") or pages.gmail_service() is None:
+        return "skipped"
+    stats = pages.catch_up()
+    return f"{stats['new']} emails caught up"
+
+
 def start():
     """Start the background loop. Returns the thread."""
+    threading.Thread(target=lambda: run_job("mail catch-up", first_run_catch_up), daemon=True).start()
+
     def loop():
         last_sample, last_triggers, last_mail = 0.0, 0.0, time.time()
         while True:

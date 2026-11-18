@@ -353,12 +353,14 @@ function mailCard(m, info) {
 }
 async function loadInbox() {
   const info = await api(`/api/inbox?show=${mailFilter === "done" ? "done" : "open"}`);
-  const shown = mailFilter === "action" ? info.emails.filter((m) => m.analysis.action_required || m.urgent) : info.emails;
-  const waiting = info.emails.filter((m) => m.analysis.action_required || m.urgent).length;
+  const shown = mailFilter === "action" ? info.emails.filter((m) => m.needs_action) : info.emails;
+  const waiting = info.emails.filter((m) => m.needs_action).length;
   if (mailFilter !== "done") $("#inbox-count").textContent = waiting || "";
-  $("#inbox-note").textContent = !info.connected ? "Google is not connected. Connect it from the classic dashboard's Settings page, then come back." : info.minutes_since_sync == null ? "Not checked yet. Checking is free: rules sort the mail and Claude is not called." : `Last checked ${info.minutes_since_sync} minute${info.minutes_since_sync === 1 ? "" : "s"} ago. Checking is free. Claude reads an email only when you ask.`;
+  $("#inbox-note").textContent = !info.connected ? "Google is not connected. Connect it from the classic dashboard's Settings page, then come back." : info.minutes_since_sync == null ? "Not checked yet. Checking is free: rules sort the mail and Claude is not called." : `Last checked ${info.minutes_since_sync} minute${info.minutes_since_sync === 1 ? "" : "s"} ago${info.newest_ts ? `, newest email ${when(info.newest_ts)}` : ""}. Checking is free. Claude reads an email only when you ask. "Needs action" shows the last ${info.action_days} days.`;
   $("#inbox-pending").innerHTML = info.pending && mailFilter !== "done" ? `<div class="row"><span class="grow">${info.pending} email${info.pending === 1 ? " has" : "s have"} not been read by Claude.</span><button class="quiet" id="inbox-analyse-all" ${info.claude ? "" : "disabled"}>Analyse up to ${info.analyse_cap} now</button></div>` : "";
-  const empty = { action: "Nothing needs action. Look under All open for the rest.", open: "No open emails stored. Press Check for new mail.", done: "Nothing marked done yet." }[mailFilter];
+  const older = info.emails.filter((m) => !m.recent && m.status !== "completed").length;
+  if (mailFilter !== "done") $("#inbox-pending").innerHTML += `<div class="row"><span class="grow hint">${info.catch_up ? `Caught up ${info.catch_up.days} days on ${when(info.catch_up.ts)}: ${info.catch_up.new} emails added.` : "Missing older mail? Catch up fetches the last 75 days, free."}${older ? ` ${older} open email${older === 1 ? " is" : "s are"} over ${info.action_days} days old.` : ""}</span><button class="quiet" id="inbox-catch-up">Catch up</button>${older ? `<button class="quiet" id="inbox-archive">Mark older than 30 days done</button>` : ""}</div>`;
+  const empty = { action: "Nothing recent needs action. Look under All open for the rest.", open: "No open emails stored. Press Check for new mail.", done: "Nothing marked done yet." }[mailFilter];
   $("#inbox-list").innerHTML = shown.map((m) => mailCard(m, info)).join("") || `<p class="hint">${empty}</p>`;
 }
 tabLoaders.inbox = () => loadInbox().catch((e) => toast(e.message));
@@ -367,6 +369,8 @@ $("#inbox-sync").addEventListener("click", (e) => busy(e.target, async () => { c
 $("#tab-inbox").addEventListener("toggle", (e) => { const id = e.target.dataset?.mailId; if (id) e.target.open ? openMail.add(id) : openMail.delete(id); }, true);
 $("#tab-inbox").addEventListener("click", (e) => {
   const t = e.target;
+  if (t.id === "inbox-catch-up") return busy(t, async () => { const s = await api("/api/inbox/catch-up", {}); toast(`${s.new} emails fetched, ${s.by_rules} filed by rules${s.errors.length ? ". " + s.errors[0] : ""}`); await loadInbox(); });
+  if (t.id === "inbox-archive") return busy(t, async () => { const s = await api("/api/inbox/archive-older", { days: 30 }); toast(`${s.archived} older emails marked done`); await loadInbox(); });
   if (t.id === "inbox-analyse-all") return busy(t, async () => { const s = await api("/api/inbox/sync", { analyse: true }); toast(`Claude analysed ${s.by_claude} email${s.by_claude === 1 ? "" : "s"}`); await loadInbox(); });
   const action = t.dataset.mail, id = t.dataset.id;
   if (!action) return;
@@ -381,9 +385,14 @@ async function loadTriggers() {
   const t = await api("/api/triggers");
   $("#triggers").innerHTML = t.kinds.map((k) => `<label class="row"><input type="checkbox" data-trigger="${k.kind}" ${k.on ? "checked" : ""}><span class="grow">${esc(k.about)}</span></label>`).join("")
     + `<p class="hint">Each thing is announced once, as a Mac notification and a text if texting is on. Nothing is sent between ${esc(t.quiet_hours[0])} and ${esc(t.quiet_hours[1])}.</p>`
+    + `<h2 style="margin-top:1rem">Your own rules</h2>`
+    + (t.rules.map((r) => `<div class="row"><span class="grow">${esc(r.name)}<br><span class="hint">${esc(t.metrics[r.metric] || r.metric)}${r.subject ? ` for ${esc(r.subject)}` : ""} ${esc(r.op)} ${r.threshold}${r.last_value != null ? `. Now ${Number(r.last_value).toFixed(2)}` : ""}</span></span><button class="danger" data-rule-remove="${r.id}">Remove</button></div>`).join("") || `<p class="hint">None yet. Example: "VWRP.L daily change below -2".</p>`)
+    + `<form class="inline" id="rule-form"><input name="name" placeholder="Name"><select name="metric">${Object.entries(t.metrics).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("")}</select><input name="subject" placeholder="Symbol or organisation"><select name="op"><option>above</option><option>below</option></select><input name="threshold" type="number" step="any" placeholder="Threshold" required><button>Add rule</button></form><p class="hint">A rule fires at most once a day, and never during quiet hours.</p>`
     + t.recent.map((r) => `<div class="row"><span class="grow hint">${esc(r.message)}</span><span class="meta">${when(r.fired_ts)}</span></div>`).join("");
 }
 $("#triggers").addEventListener("change", (e) => { if (e.target.dataset.trigger) busy(null, async () => { await api("/api/triggers/set", { kind: e.target.dataset.trigger, on: e.target.checked }); }); });
+$("#triggers").addEventListener("submit", (e) => { if (e.target.id !== "rule-form") return; e.preventDefault(); busy(e.target.querySelector("button"), async () => { await api("/api/rules/add", formData(e.target)); await loadTriggers(); toast("Rule added"); }); });
+$("#triggers").addEventListener("click", (e) => { if (e.target.dataset.ruleRemove) busy(e.target, async () => { await api("/api/rules/remove", { id: +e.target.dataset.ruleRemove }); await loadTriggers(); }); });
 $("#trigger-check").addEventListener("click", (e) => busy(e.target, async () => { const r = await api("/api/triggers/check", {}); toast(r.sent.length ? `Sent ${r.sent.length}: ${r.sent[0]}` : "Nothing new to announce (or it is quiet hours)"); loadTriggers(); }));
 const loadControlBase = loaders.control;
 loaders.control = async () => { await loadControlBase(); await loadTriggers(); };
@@ -476,6 +485,170 @@ $("#tab-university").addEventListener("click", (e) => {
   if (action === "review") body.understanding = document.querySelector(`[data-review-for="${id}"]`).value;
   busy(e.target, async () => { renderUniversity(await api("/api/university/update", body)); toast("Saved"); });
 });
+
+/* ---------- Google connection (shown in Control) ---------- */
+async function loadGoogle() {
+  const g = await api("/api/google");
+  const tone = g.state === "connected" ? "ok" : "warm";
+  $("#google").innerHTML = `<div class="row"><span class="grow">Gmail and Calendar</span><span class="tag ${tone}">${esc(g.state)}</span></div>`
+    + (g.can.length ? `<p class="hint">Allowed to: ${esc(g.can.join(", "))}.${g.last_sync_minutes != null ? ` Mail last checked ${g.last_sync_minutes} minutes ago.` : ""}</p>` : "")
+    + (g.advice ? `<p>${esc(g.advice)}</p>` : "")
+    + (g.login.state !== "idle" ? `<p class="hint">${esc(g.login.detail)}</p>` : "");
+  $("#google-connect").textContent = g.state === "connected" ? "Reconnect" : "Connect Google";
+  $("#google-connect").dataset.force = g.state === "connected" ? "1" : "";
+  if (g.login.state === "waiting") setTimeout(() => { if (!$("#control").hidden) loadGoogle(); }, 4000);
+}
+$("#google-connect").addEventListener("click", (e) => busy(e.target, async () => {
+  const r = await api("/api/google/connect", { force: !!e.target.dataset.force });
+  toast(r.detail); await loadGoogle();
+}));
+const loadControlWithTriggers = loaders.control;
+loaders.control = async () => { await loadControlWithTriggers(); await loadGoogle(); };
+
+/* ---------- Shared bits for the newer tabs ---------- */
+const kpis = (items) => `<div class="kpis">${items.map(([value, label, sub]) => `<div class="kpi"><b>${esc(value)}</b><span>${esc(label)}${sub ? `<br>${esc(sub)}` : ""}</span></div>`).join("")}</div>`;
+const SERIES = ["#f2b33d", "#9db8e8", "#7fd1a5", "#ef8a7a", "#c9a0f2", "#efe6d2"];
+const signedPct = (x, digits = 1) => (x == null ? `<span class="hint">n/a</span>` : `<span class="${x >= 0 ? "up" : "down"}">${x >= 0 ? "+" : ""}${Number(x).toFixed(digits)}%</span>`);
+
+/* A simple line chart: rows of {date, series, value}. One y-axis, labelled. */
+function lineChart(rows, yLabel) {
+  if (!rows.length) return `<p class="hint">No data yet.</p>`;
+  const W = 640, H = 220, L = 44, R = 10, T = 10, B = 26;
+  const dates = [...new Set(rows.map((r) => r.date))].sort(), names = [...new Set(rows.map((r) => r.series))];
+  const values = rows.map((r) => r.value), low = Math.min(...values), high = Math.max(...values), span = high - low || 1;
+  const x = (d) => L + (dates.indexOf(d) / Math.max(1, dates.length - 1)) * (W - L - R), y = (v) => T + (1 - (v - low) / span) * (H - T - B);
+  const ticks = [low, low + span / 2, high];
+  let svg = ticks.map((v) => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(span < 10 ? 1 : 0)}</text>`).join("");
+  svg += `<text x="${L}" y="${H - 6}">${esc(dates[0])}</text><text x="${W - R}" y="${H - 6}" text-anchor="end">${esc(dates.at(-1))}</text>`;
+  names.forEach((name, i) => {
+    const pts = rows.filter((r) => r.series === name).sort((a, b) => (a.date < b.date ? -1 : 1)).map((r) => `${x(r.date).toFixed(1)},${y(r.value).toFixed(1)}`).join(" ");
+    svg += `<polyline points="${pts}" fill="none" stroke="${SERIES[i % SERIES.length]}" stroke-width="2"/>`;
+  });
+  const legend = names.length > 1 ? `<div class="legend">${names.map((n, i) => `<span><i style="background:${SERIES[i % SERIES.length]}"></i>${esc(n)}</span>`).join("")}</div>` : "";
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(yLabel)} from ${esc(dates[0])} to ${esc(dates.at(-1))}">${svg}</svg>${legend}<p class="hint">${esc(yLabel)}</p>`;
+}
+function tabUpdate(tab, url, render) {     // forms with data-act="..." post their fields to url and re-render
+  $(tab).addEventListener("submit", (e) => { e.preventDefault(); const f = e.target; if (!f.dataset.act) return;
+    busy(f.querySelector("button"), async () => { render(await api(url, { action: f.dataset.act, ...formData(f) })); toast("Saved"); }); });
+}
+
+/* ---------- Health ---------- */
+let healthNext = false;
+function renderHealth(h) {
+  const s = h.sleep, w = h.this_week;
+  const plan = h.plan.map((d) => `<details ${d.today && d.kind !== "rest" ? "open" : ""}><summary>${esc(new Date(d.date).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" }))}: ${esc(d.title)}${d.kind === "rest" ? "" : d.start ? `, ${esc(d.start)} to ${esc(d.end)}` : ", no free slot in your training window"}${d.today ? " (today)" : ""}</summary><ul>${d.details.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>`).join("");
+  const lifts = h.exercises.map((e) => `<div class="row"><span class="grow">${esc(e.name)}${e.trend.length ? `<br><span class="hint">Estimated 1RM ${e.trend.at(-1).e1rm} kg on ${esc(e.trend.at(-1).date)}</span>` : ""}</span><span class="meta">${e.next ? `Next: ${e.next.weight_kg} kg x ${e.next.reps}` : ""}</span></div>${e.next ? `<p class="hint">${esc(e.next.why)}</p>` : ""}`).join("");
+  $("#tab-health").innerHTML = kpis([
+    [s.average ? `${s.average.toFixed(1)} h` : "not logged", "sleep, 7-day average", s.debt > 0.5 ? `${s.debt.toFixed(1)} h short this week` : ""],
+    [s.average_bedtime || "not logged", "usual bedtime", `target ${h.bedtime}`],
+    [`${w.strength} of ${h.gym_days}`, "strength sessions this week", ""],
+    [`${w.runs} of ${h.run_days}`, "runs this week", `${(w.run_km || 0).toFixed(1)} km`],
+    [h.protein_avg ? `${Math.round(h.protein_avg)} g` : "not logged", "protein, 7-day average", h.protein_range ? `range ${h.protein_range[0]} to ${h.protein_range[1]} g` : "log your weight for a range"],
+  ]) + `<div class="split">
+    <div>
+      <div class="panel"><div class="panel-head"><h2>What the numbers say</h2><button class="quiet" id="health-review">Write a weekly review</button></div>
+        ${h.insights.map((n) => `<div class="note ${esc(n.tone)}">${esc(n.text)}</div>`).join("")}<div id="health-review-text" class="prose"></div></div>
+      <div class="panel"><div class="panel-head"><h2>${h.next_week ? "Next" : "This"} week's plan</h2><span><button class="quiet" id="health-week">${h.next_week ? "Show this week" : "Show next week"}</button> <button class="quiet" id="health-plan-cal">Add timed sessions to my calendar</button></span></div>
+        ${plan}${h.plan_errors.map((e) => `<p class="hint">${esc(e)}</p>`).join("")}
+        <form class="inline" data-act="plan-settings"><label class="hint">Gym days <select name="gym_days">${[3, 4].map((n) => `<option ${n === h.gym_days ? "selected" : ""}>${n}</option>`).join("")}</select></label><label class="hint">Runs <select name="run_days">${[0, 1, 2, 3].map((n) => `<option ${n === h.run_days ? "selected" : ""}>${n}</option>`).join("")}</select></label><label class="hint">Train in the <select name="train_time">${["morning", "midday", "evening"].map((n) => `<option ${n === h.train_time ? "selected" : ""}>${n}</option>`).join("")}</select></label><button class="quiet">Update plan</button></form>
+        <p class="hint">Sessions end at least two hours before bedtime. Strength: work 1 to 3 reps short of failure, and add weight once every set reaches the top of the rep range.</p></div>
+      <div class="panel"><h2>Hours slept</h2>${lineChart(h.sleep_history.map((r) => ({ date: r.date, series: "Sleep", value: r.hours })), "Hours of sleep per night")}</div>
+    </div>
+    <aside>
+      <div class="panel"><h2>Log last night</h2><form class="stack" data-act="sleep"><label>Went to bed <input name="bed" type="time" value="23:30" required></label><label>Woke up <input name="wake" type="time" value="07:30" required></label><label>How rested, 1 to 5 <input name="quality" type="number" min="1" max="5" value="3"></label><button>Save sleep</button></form></div>
+      <div class="panel"><h2>Log a session</h2><form class="stack" data-act="workout"><select name="kind"><option value="strength">Strength</option><option value="run">Run</option><option value="other">Other</option></select><input name="title" placeholder="Upper A, easy run, football"><label>Minutes <input name="minutes" type="number" value="60" min="0"></label><label>Distance in km <input name="distance" type="number" step="0.1" min="0"></label><label>Effort 1 to 10 <input name="effort" type="number" min="1" max="10"></label><button>Save session</button></form></div>
+      <div class="panel"><h2>Log a lift</h2><form class="stack" data-act="lift"><input name="exercise" placeholder="Exercise, e.g. Bench press" list="exercise-names" required><datalist id="exercise-names">${h.exercises.map((e) => `<option value="${esc(e.name)}">`).join("")}</datalist><label>Weight in kg <input name="weight" type="number" step="0.5" min="0" required></label><label>Reps <input name="reps" type="number" value="8" min="1"></label><label>Sets <input name="sets" type="number" value="3" min="1"></label><button>Save lift</button></form>${lifts}</div>
+      <div class="panel"><h2>Body</h2><form class="stack" data-act="body"><label>Weight in kg <input name="weight" type="number" step="0.1"></label><label>Protein today in g <input name="protein" type="number"></label><button>Save</button></form>${h.weight ? `<p class="hint">Latest weight ${h.weight} kg.</p>` : ""}</div>
+      <p class="hint">${esc(h.note)}</p>
+    </aside></div>`;
+}
+const loadHealth = () => api(`/api/health${healthNext ? "?next=1" : ""}`).then(renderHealth).catch((e) => toast(e.message));
+tabLoaders.health = loadHealth;
+$("#tab-health").addEventListener("submit", (e) => { e.preventDefault(); const f = e.target;
+  busy(f.querySelector("button"), async () => { renderHealth(await api("/api/health/update", { action: f.dataset.act, next_week: healthNext, ...formData(f) })); toast("Saved"); }); });
+$("#tab-health").addEventListener("click", (e) => {
+  if (e.target.id === "health-week") { healthNext = !healthNext; loadHealth(); }
+  if (e.target.id === "health-plan-cal") busy(e.target, async () => { const h = await api("/api/health/update", { action: "plan-to-calendar", next_week: healthNext }); renderHealth(h); toast(`${h.added} session${h.added === 1 ? "" : "s"} added to your Cassiopeia calendar`); });
+  if (e.target.id === "health-review") busy(e.target, async () => { $("#health-review-text").innerHTML = markdown((await api("/api/health/review", {})).review); });
+});
+
+/* ---------- Markets ---------- */
+let marketDays = 130;
+function renderMarkets(m) {
+  const fig = (f) => f.ok ? (f.price_gbp != null ? `£${f.price_gbp.toFixed(2)}` : `${f.price.toFixed(2)} ${esc(f.currency || "")}`) : `<span class="hint">no data</span>`;
+  const fundRow = (w) => `<tr><td>${esc(w.name)}<br><span class="hint">${esc(w.symbol)}${w.note ? `: ${esc(w.note)}` : ""}</span></td><td class="num">${fig(w.figures)}</td><td class="num">${signedPct(w.figures.day, 2)}</td><td class="num">${signedPct(w.figures.month)}</td><td class="num">${signedPct(w.figures.year)}</td><td class="num">${w.figures.volatility == null ? "" : w.figures.volatility.toFixed(0) + "%"}</td><td class="num"><button class="quiet" data-note="${esc(w.symbol)}">Study note</button> <button class="danger" data-unwatch="${esc(w.symbol)}">Remove</button></td></tr>`;
+  const head = `<tr><th>Name</th><th class="num">Price</th><th class="num">Day</th><th class="num">Month</th><th class="num">Year</th><th class="num">Volatility</th><th></th></tr>`;
+  const holdings = m.funds.filter((w) => w.kind === "holding"), research = m.funds.filter((w) => w.kind === "research");
+  const news = holdings.flatMap((w) => w.news.map((n) => `<div class="row"><span class="grow"><a href="${esc(n.link)}" target="_blank" rel="noopener noreferrer">${esc(n.title)}</a></span><span class="meta">${esc(n.source)}, ${esc(w.symbol)}</span></div>`)).join("");
+  const trades = m.trades.map((t) => `<tr><td>${esc(t.symbol)}<br><span class="hint">${esc(t.thesis)}</span></td><td>${esc(t.date)}</td><td class="num">£${(t.units * t.price_gbp).toFixed(0)}</td><td class="num">${t.value_now == null ? "" : "£" + t.value_now.toFixed(0)}</td><td class="num">${t.gain == null ? "" : signedPct(t.gain * 100)}</td><td>${t.closed_date ? `closed ${esc(t.closed_date)}` : `<button class="quiet" data-close="${t.id}">Close</button>`}</td></tr>`).join("");
+  $("#tab-markets").innerHTML = `${m.problems.length ? `<p class="hint">Some prices could not be refreshed: ${esc(m.problems.join("; "))}</p>` : ""}
+  <div class="panel"><div class="panel-head"><h2>Your funds: growth of £100</h2><span>${[22, 66, 130, 253].map((d) => `<button class="quiet" data-days="${d}" ${d === m.days ? 'aria-pressed="true"' : ""}>${{ 22: "1 month", 66: "3 months", 130: "6 months", 253: "1 year" }[d]}</button>`).join(" ")} <button class="quiet" id="markets-refresh">Refresh prices</button></span></div>
+    ${lineChart(m.chart.map((r) => ({ date: r.date, series: r.series, value: r.value })), "Each fund rebased to 100 at the start of the period")}
+    <table>${head}${holdings.map(fundRow).join("")}</table><div id="study-note" class="prose"></div></div>
+  <div class="split">
+    <div>
+      <div class="panel"><h2>Study list</h2><p class="hint">Things to learn from, not things to buy.</p><table>${head}${research.map(fundRow).join("")}</table>
+        <form class="inline" data-act="watch"><input name="symbol" placeholder="Yahoo symbol, e.g. VUAG.L" required><input name="name" placeholder="Name"><select name="kind"><option value="holding">I hold it</option><option value="research">Study list</option></select><input name="keywords" placeholder="News keywords, comma separated"><button>Add</button></form></div>
+      <div class="panel"><h2>Paper trades (pretend money)</h2>${trades ? `<table><tr><th>Symbol and reason</th><th>Opened</th><th class="num">Put in</th><th class="num">Worth now</th><th class="num">Change</th><th></th></tr>${trades}</table>` : `<p class="hint">None yet. Writing down why you would buy, then checking months later, is the useful part.</p>`}
+        <form class="inline" data-act="paper-buy"><input name="symbol" placeholder="Symbol" required><input name="amount" type="number" min="1" placeholder="£ amount" required><input name="thesis" placeholder="Why, in one line" required><button>Open paper trade</button></form></div>
+    </div>
+    <aside>
+      <div class="panel"><h2>Market trackers</h2>${m.trackers.map((t) => `<div class="row"><span class="grow" title="${esc(t.about)}">${esc(t.name)}<br><span class="hint">${esc(t.about)}</span></span><span class="meta">${t.figures.ok ? t.figures.price.toLocaleString("en-GB", { maximumFractionDigits: 2 }) : "no data"}<br>${signedPct(t.figures.day, 2)}</span></div>`).join("")}</div>
+      <div class="panel"><h2>News about your funds</h2>${news || `<p class="hint">No headlines match your funds' keywords today.</p>`}</div>
+      <p class="hint">${esc(m.note)}</p>
+    </aside></div>`;
+}
+const loadMarkets = () => { $("#tab-markets").innerHTML = `<p class="hint">Loading prices. The first load each half hour takes a few seconds.</p>`; return api(`/api/markets?days=${marketDays}`).then(renderMarkets).catch((e) => toast(e.message)); };
+tabLoaders.markets = loadMarkets;
+tabUpdate("#tab-markets", "/api/markets/update", renderMarkets);
+$("#tab-markets").addEventListener("click", (e) => {
+  const d = e.target.dataset;
+  if (d.days) { marketDays = +d.days; loadMarkets(); }
+  if (e.target.id === "markets-refresh") busy(e.target, async () => renderMarkets(await api("/api/markets/refresh", { days: marketDays })));
+  if (d.unwatch) busy(e.target, async () => renderMarkets(await api("/api/markets/update", { action: "unwatch", symbol: d.unwatch })));
+  if (d.close) busy(e.target, async () => renderMarkets(await api("/api/markets/update", { action: "paper-close", id: +d.close })));
+  if (d.note) busy(e.target, async () => { const r = await api("/api/markets/note", { symbol: d.note }); $("#study-note").innerHTML = `<h2>${esc(r.symbol)}</h2>` + markdown(r.note); $("#study-note").scrollIntoView({ behavior: "smooth" }); });
+});
+
+/* ---------- Placements ---------- */
+function renderPlacements(p) {
+  const opts = (current) => p.statuses.map((s) => `<option ${s === current ? "selected" : ""}>${esc(s)}</option>`).join("");
+  $("#tab-placements").innerHTML = kpis([[p.counts["in progress"], "in progress"], [p.counts.applied, "applied"], [p.counts.interviews, "interviews"],
+    [p.next ? `${p.next.days_left} days` : "none set", "to the next deadline", p.next ? p.next.organisation : ""]])
+  + `<div class="panel"><h2>Add an opportunity</h2><form class="inline" data-act="add"><input name="organisation" placeholder="Organisation, e.g. ESA" required><input name="role" placeholder="Role or scheme"><input name="location" placeholder="Location"><input name="deadline" type="date" aria-label="Deadline"><input name="link" placeholder="Link to the advert"><button>Add</button></form>
+    <p class="hint">Entering the deadline is what lets Cassiopeia warn you in time.</p></div>
+  <div class="panel card-list">${p.placements.map((x) => `<details ${x.urgent ? "open" : ""}><summary><span class="tag ${x.urgent ? "warm" : ""}">${esc(x.status)}</span> <strong>${esc(x.organisation)}</strong> ${esc(x.role || "role to confirm")} <span class="meta">${x.deadline ? `deadline ${esc(x.deadline)}${x.days_left != null ? `, ${x.days_left < 0 ? "passed" : x.days_left + " days"}` : ""}` : "no deadline"}</span></summary>
+    ${x.link ? `<p><a href="${esc(x.link)}" target="_blank" rel="noopener noreferrer">Open the advert</a>${x.location ? ` <span class="hint">${esc(x.location)}</span>` : ""}</p>` : ""}
+    <form class="stack" data-act="update"><input type="hidden" name="id" value="${x.id}"><label>Status <select name="status">${opts(x.status)}</select></label><label>Deadline <input name="deadline" type="date" value="${esc(x.deadline || "")}"></label><textarea name="notes" placeholder="Requirements, contacts, cover letter points, interview questions">${esc(x.notes || "")}</textarea><span><button>Save changes</button> <button type="button" class="danger" data-remove-placement="${x.id}">Remove</button></span></form></details>`).join("") || `<p class="hint">No opportunities tracked yet.</p>`}</div>`;
+}
+tabLoaders.placements = () => api("/api/placements").then(renderPlacements).catch((e) => toast(e.message));
+tabUpdate("#tab-placements", "/api/placements/update", renderPlacements);
+$("#tab-placements").addEventListener("click", (e) => { const id = e.target.dataset.removePlacement; if (id) busy(e.target, async () => renderPlacements(await api("/api/placements/update", { action: "remove", id: +id }))); });
+
+/* ---------- Tutoring ---------- */
+function renderTutoring(t) {
+  $("#tab-tutoring").innerHTML = `<div class="split even">${t.days.map((d) => `<div class="panel slots"><h2>${esc(d.day)}</h2><p class="hint">${esc(t.window[0])} to ${esc(t.window[1])}, ${t.lesson_minutes}-minute lessons</p>
+    ${d.slots.length ? d.slots.map((s) => `<code>${esc(s)}</code>`).join("") + `<p class="hint">Ready to paste: ${esc(d.slots.join(", "))}</p>` : `<p class="hint">Fully booked.</p>`}${d.errors.map((e) => `<p class="hint">${esc(e)}</p>`).join("")}</div>`).join("")}</div>
+  <div class="panel"><h2>Enquiries (${t.enquiries.length})</h2>${t.enquiries.map((e) => `<div class="row"><span class="grow"><strong>${esc(e.sender)}</strong> ${esc(e.subject)}<br><span class="hint">${esc(e.summary || "")}</span></span><button class="quiet" data-open-mail="${esc(e.id)}">Open in Inbox</button></div>`).join("") || `<p class="hint">No open tutoring enquiries. Emails appear here once Claude files them as Tutoring.</p>`}</div>`;
+}
+tabLoaders.tutoring = () => api("/api/tutoring").then(renderTutoring).catch((e) => toast(e.message));
+$("#tab-tutoring").addEventListener("click", (e) => { if (e.target.dataset.openMail) { mailFilter = "open"; openMail.add(e.target.dataset.openMail); showTab("inbox"); } });
+
+/* ---------- Phone and HomePod access (shown in Control) ---------- */
+async function loadAccess() {
+  const a = await api("/api/access");
+  $("#access").innerHTML = !a.lan
+    ? `<p class="hint">Off. Cassiopeia only answers on this Mac. To use it from your phone or a Siri Shortcut, set ENABLE_LAN_ACCESS=true in .env and restart.</p>`
+    : `<div class="row"><span class="grow">Address on your home Wi-Fi</span><code>${esc(a.address || "unknown")}</code></div>`
+      + (a.token ? `<div class="row"><span class="grow">Access token</span><code id="token-text" data-token="${esc(a.token)}">hidden</code><button class="quiet" id="token-show">Show</button><button class="danger" id="token-rotate">Make a new one</button></div>` : "")
+      + `<p class="hint">On your phone, open the address, sign in with the token once, then use Share, Add to Home Screen. For Siri, see CASSIOPEIA.md section 4. Home Wi-Fi only: the connection is not encrypted.</p>`;
+}
+$("#access").addEventListener("click", (e) => {
+  if (e.target.id === "token-show") { const t = $("#token-text"); t.textContent = t.textContent === "hidden" ? t.dataset.token : "hidden"; }
+  if (e.target.id === "token-rotate") busy(e.target, async () => { await api("/api/access/rotate", {}); await loadAccess(); toast("New token made. Sign in again on your other devices."); });
+});
+const loadControlWithGoogle = loaders.control;
+loaders.control = async () => { await loadControlWithGoogle(); await loadAccess(); };
 
 /* ---------- Start ---------- */
 loadState().catch(() => {});

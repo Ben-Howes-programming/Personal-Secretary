@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS cass_updates (
 CREATE TABLE IF NOT EXISTS cass_jobs (
     name TEXT PRIMARY KEY, last_run_ts REAL, last_status TEXT, last_detail TEXT
 );
+CREATE TABLE IF NOT EXISTS cass_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, metric TEXT, subject TEXT DEFAULT '', op TEXT, threshold REAL,
+    enabled INTEGER DEFAULT 1, last_value REAL, last_checked_ts REAL, created_ts REAL
+);
 CREATE TABLE IF NOT EXISTS cass_trigger_log (
     key TEXT PRIMARY KEY, kind TEXT, message TEXT, fired_ts REAL
 );
@@ -64,6 +68,9 @@ def initialise():
     db.initialise_database()
     with db.connect() as c:
         c.executescript(SCHEMA)
+        # Emails analysed by version 0.5 carry stale "needs action" flags with no record of who set them.
+        # Mark them as legacy once, so they stop crowding the inbox. Nothing is deleted.
+        c.execute("UPDATE emails SET analysed_by = 'legacy' WHERE analysed_by IS NULL")
 
 
 # Memories ----------------------------------------------------------
