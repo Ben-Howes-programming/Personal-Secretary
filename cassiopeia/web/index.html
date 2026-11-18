@@ -83,6 +83,10 @@
             <button>Plan event</button>
           </form>
           <p class="hint">Saved in Cassiopeia only. Your Google Calendar is not changed.</p></div>
+        <div class="panel"><h2>Calendar feeds</h2><div id="feeds"></div>
+          <form id="feed-form" class="stack"><input name="name" placeholder="Name, e.g. My timetable"><input name="url" placeholder="Paste the iCal or webcal link" required>
+            <select name="kind"><option value="timetable">Timetable: counts as busy time</option><option value="suggestions">Suggestions: ideas only</option></select><button>Subscribe</button></form>
+          <p class="hint">Bath timetable: open MyTimetable, find the subscribe or calendar link, and paste it here. The link works like a password, so it stays on this Mac.</p></div>
         <div class="panel"><h2>Find free time</h2>
           <form id="free-form" class="stack">
             <label>Day <input name="day" type="date" required></label>

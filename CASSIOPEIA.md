@@ -1,6 +1,6 @@
 # Cassiopeia
 
-The desktop app that replaces the Streamlit front end. Version 0.3.0. Written 16 and 17 November 2026 by Claude Fable 5.2, extended 18 November by Claude Opus 5.5. This file is the user guide, the honest status report and the roadmap.
+The desktop app that replaces the Streamlit front end. Version 0.4.0. Written 16 and 17 November 2026 by Claude Fable 5.2, extended 18 November by Claude Opus 5.5. This file is the user guide, the honest status report and the roadmap.
 
 ## 1. Start it
 
@@ -18,7 +18,7 @@ A window opens (Chrome in app mode if Chrome is installed, otherwise your defaul
 | Always running, starts at login | `bash scripts/install_cassiopeia.sh` once. It also adds a Cassiopeia app to `~/Applications` |
 | Undo that | `bash scripts/uninstall_cassiopeia.sh` |
 | The old dashboard | `streamlit run app.py`. No longer needed: every page and the Google connection now live in Cassiopeia. Both use the same database |
-| Run the tests | `python -m pytest tests -q` (53 tests, about 10 seconds, no network) |
+| Run the tests | `python -m pytest tests -q` (57 tests, about 10 seconds, no network) |
 
 No new packages are required. Optional: `pip install pypdf` to search inside PDFs, `pip install pywebview` for a native window without Chrome.
 
@@ -41,7 +41,7 @@ Cassiopeia cannot message anyone but you. `cassiopeia/notify.py` has no recipien
 | Section | What works now |
 |---|---|
 | Today, Overview | Greeting, latest briefing, seven-day schedule from every connected calendar plus events Cassiopeia planned, tasks, weather for Bath, headlines with each source's lean, screen time if enabled |
-| Today, Calendar | Week grid from 07:00 to 23:00 across all calendars, overlapping events side by side, a free-time finder, and a form to plan events. Planned events stay in Cassiopeia. Google Calendar is never changed |
+| Today, Calendar | Week grid from 07:00 to 23:00 across all calendars, overlapping events side by side, a free-time finder, and a form to plan events. Planned events stay in Cassiopeia. Google Calendar is never changed. Calendar feeds: paste any iCal or webcal link. A "timetable" feed (your Bath MyTimetable link) counts as busy time. A "suggestions" feed shows dashed ideas that never block time, and the morning briefing may mention one that fits a free evening |
 | Today, Inbox | "Check for new mail" is free: rules sort it and Claude is not called. Claude reads an email only when you press Analyse or Draft a reply. Drafts are edited here and never sent. "Needs action" shows only the last 21 days. "Catch up" fetches up to 75 days of missed mail for free, and "Mark older than 30 days done" clears old clutter. Flags set by the old version 0.5 app are ignored |
 | Today, Money | Accounts and balances you enter, net worth with its trend, ISA and Lifetime ISA allowances, monthly budget, overdraft payoff plan. Nothing is invented: an account with no balance shows "not set" |
 | Today, Markets | Your funds rebased to 100 over 1, 3, 6 or 12 months, price, day, month and year change, volatility, the study list, market trackers with what each one tells you, headlines matching each fund, paper trades with a written reason, and a Claude study note per fund on request |
@@ -84,27 +84,32 @@ Cassiopeia cannot see your Home devices. It reaches them through Apple's Shortcu
 
 Lights and a TV only respond if they are in the Home app. Until a shortcut exists the step reports "did not run" and the others carry on.
 
-### Phone and HomePod (switched on 18 November)
+### Phone and HomePod (switched on 18 November, encrypted from 0.4)
 
-`ENABLE_LAN_ACCESS=true` in `.env` lets devices on your home Wi-Fi reach Cassiopeia, but only with the access token. Find the address and token in Control, under Phone and HomePod. macOS may ask once whether Python may accept incoming connections: allow it.
+`ENABLE_LAN_ACCESS=true` in `.env` lets devices on your home Wi-Fi reach Cassiopeia with the access token. They connect over HTTPS on port 8766, using a certificate Cassiopeia makes on your Mac (in `certs/`, ignored by Git). Your Mac's own window keeps using `http://127.0.0.1:8765`. The address, token and certificate link are in Control, under Phone and HomePod. macOS may ask once whether Python may accept incoming connections: allow it.
 
-Phone: open the address in Safari, enter the token once, then Share, Add to Home Screen. It opens like an app.
+iPhone, once:
 
-Siri on the HomePod or iPhone (one-time setup in the Shortcuts app on your iPhone):
+1. In Safari, open the certificate link from Control (`https://[address]:8766/cassiopeia.crt`). Safari warns that the connection is not private, because your phone does not trust the certificate yet: continue, then allow the download.
+2. Settings, Profile Downloaded, Install.
+3. Settings, General, About, Certificate Trust Settings: switch on "Cassiopeia private authority".
+4. Open `https://[address]:8766`, enter the token, then Share, Add to Home Screen.
+
+Siri on the HomePod or iPhone (Shortcuts app on your iPhone):
 
 1. New shortcut, named "Ask Cassiopeia". Siri runs it when you say that name.
 2. Add "Ask for Input" (Text), prompt "What do you need?".
-3. Add "Get Contents of URL": URL `http://[address from Control]/api/siri`, Method POST, Headers `Authorization` = `Bearer [token from Control]`, Request Body JSON with key `text` = Provided Input.
+3. Add "Get Contents of URL": URL `https://[address]:8766/api/siri`, Method POST, Headers `Authorization` = `Bearer [token from Control]`, Request Body JSON with key `text` = Provided Input.
 4. Add "Get Dictionary Value" for key `reply`, then "Speak Text" with it.
 5. In the shortcut settings, allow it on HomePod (Personal Requests must be on in the Home app).
 
-Saying "Hey Siri, Ask Cassiopeia" then "Initiate focus protocol" runs the protocol on the Mac. Protocol steps that are Shortcuts run on the Mac.
+"Hey Siri, Ask Cassiopeia", then "Initiate focus protocol", runs the protocol on the Mac.
 
-Limits: the connection is plain HTTP, so use it on home Wi-Fi only, never on public networks. Self-update, running simulations, connecting Google and deleting vault files stay on the Mac whatever the token. Ten wrong tokens lock an address out for ten minutes. "Make a new one" in Control replaces the token everywhere. To switch it all off, set `ENABLE_LAN_ACCESS=false` and restart.
+Limits: if the certificate cannot be made (the `openssl` tool missing or failing), Control says "Plain HTTP" and home access falls back to unencrypted HTTP on port 8765: use home Wi-Fi only. Self-update, running simulations, connecting Google and deleting vault files stay on the Mac whatever the token. Ten wrong tokens lock an address out for ten minutes. "Make a new one" in Control replaces the token everywhere. If your Mac gets a new address on the Wi-Fi, a new certificate is made at the next start, and the phone keeps trusting it because the authority is unchanged. To switch home access off, set `ENABLE_LAN_ACCESS=false` and restart.
 
 ## 5. Honest status
 
-Tested on Linux (Python 3.13, headless Chrome): all 53 tests, every page and tab rendered and screenshotted, server security checks, sandbox runs, backtest maths.
+Tested on Linux (Python 3.13, headless Chrome): all 57 tests, every page and tab rendered and screenshotted, server security checks, sandbox runs, backtest maths.
 
 Not tested, because it needs your Mac. Expect first-run fixes:
 
@@ -141,7 +146,8 @@ Nine rules are tested every night on two years of prices for your funds and the 
 |---|---|---|
 | Done | First run on the Mac, all pages ported, Connect Google, placement and price triggers, your own rules, token login with phone and Siri access | 18 November |
 | 1 | Fix what the first run of 0.3 turns up | Check the four new tabs, the Siri shortcut and one text |
-| 2 | HTTPS for home access, so the token is not sent in the clear | A self-signed certificate, trusted once on the phone | Calendar, inbox, money and university are done. The data layer exists in `database/` and `services/`. Add a function to `cassiopeia/pages.py`, a route in `server.py`, a tab in `web/` |
+| Done | HTTPS for home access and calendar feeds | 18 November, version 0.4 |
+| 2 | A whole-calendar feed of SU events | The SU publishes single-event .ics files but no whole-calendar feed was found. Ask the SU, or scrape its event list carefully | Calendar, inbox, money and university are done. The data layer exists in `database/` and `services/`. Add a function to `cassiopeia/pages.py`, a route in `server.py`, a tab in `web/` |
 | 3 | Event suggestions | The morning briefing already names a fund to read about from the biggest one-month moves. Next: events from Bath university and society calendars if they publish iCal feeds |
 | 4 | Retire the Streamlit app | Delete `views/`, `ui/`, `app.py` once nothing is missed |
 | 5 | Agents that carry out multi-step jobs | Placement scan, weekly review, study planner. Reuse `brain.AGENTS` and add a step loop with a hard step limit |

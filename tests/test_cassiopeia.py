@@ -556,3 +556,101 @@ def test_morning_briefing_mentions_market_movers_from_cache_only():
     movers = briefing.market_movers()
     assert movers[0].startswith("WisdomTree Quantum Computing (Acc) (WQTM.L, you hold it): +12.0%")
     assert len(movers) == 2                                                    # symbols with no cached prices are skipped
+
+
+# Calendar feeds ----------------------------------------------------------------
+SAMPLE_ICS = """BEGIN:VCALENDAR\r
+VERSION:2.0\r
+BEGIN:VEVENT\r
+DTSTART;TZID=Europe/London:20261119T091500\r
+DTEND;TZID=Europe/London:20261119T100500\r
+SUMMARY:PH20017 Statistical Mechanics\\, lecture\r
+LOCATION:8W 2.1\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+DTSTART:20261119T150000Z\r
+DTEND:20261119T160000Z\r
+SUMMARY:A very long title that the feed has fol\r
+ ded across two lines\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+DTSTART;VALUE=DATE:20261121\r
+SUMMARY:Reading day\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+DTSTART:20261120T100000\r
+SUMMARY:Cancelled seminar\r
+STATUS:CANCELLED\r
+END:VEVENT\r
+END:VCALENDAR\r
+"""
+
+
+def test_ics_parsing():
+    from cassiopeia import feeds
+    found = feeds.parse_ics(SAMPLE_ICS)
+    assert [e["summary"] for e in found] == ["PH20017 Statistical Mechanics, lecture",
+                                            "A very long title that the feed has folded across two lines", "Reading day"]
+    assert found[0]["start"]["dateTime"].startswith("2026-11-19T09:15:00+00:00") and found[0]["location"] == "8W 2.1"
+    assert found[1]["start"]["dateTime"].startswith("2026-11-19T15:00:00")         # UTC converted to UK time
+    assert found[2]["start"] == {"date": "2026-11-21"} and found[2]["end"] == {"date": "2026-11-22"}
+
+
+def test_feeds_join_the_calendar_and_suggestions_never_block(monkeypatch):
+    import requests
+    from cassiopeia import events, feeds, pages
+    class Reply:
+        text = SAMPLE_ICS
+        def raise_for_status(self):
+            pass
+    monkeypatch.setattr(requests, "get", lambda url, **k: Reply())
+    monkeypatch.setattr(events, "now", lambda: datetime(2026, 11, 18, 8, 0, tzinfo=events.ZONE))
+    with pytest.raises(ValueError):
+        feeds.add("Bad", "not a link", "timetable")
+    feeds.add("My timetable", "webcal://mytimetable.bath.ac.uk/feed/SECRET123", "timetable")
+    listed = feeds.listing()[0]
+    assert listed["where"] == "mytimetable.bath.ac.uk/..." and "SECRET" not in json.dumps(feeds.listing())
+    week = pages.calendar("2026-11-16", 7)
+    assert "PH20017 Statistical Mechanics, lecture" in [e["title"] for e in week["events"]]
+    free = pages.free_time("2026-11-19", "09:00", "11:00", 60)
+    assert [(g["from"], g["to"]) for g in free["gaps"]] == [("09:00", "09:15"), ("10:05", "11:00")]   # the lecture blocks time
+    feeds.remove(listed["id"])
+    feeds.add("SU events", "https://example.org/events.ics", "suggestions")
+    assert [(g["from"], g["to"]) for g in pages.free_time("2026-11-19", "09:00", "11:00", 60)["gaps"]] == [("09:00", "11:00")]   # ideas do not block
+    ideas = feeds.suggestions(days=7)
+    assert ideas[0]["title"] == "PH20017 Statistical Mechanics, lecture" and ideas[0]["source"] == "SU events"
+
+
+# HTTPS for other devices ----------------------------------------------------------
+@pytest.mark.skipif(__import__("shutil").which("openssl") is None, reason="openssl not installed")
+def test_certificate_is_made_and_trusted_by_its_authority(tmp_path, monkeypatch):
+    import ssl
+    import threading
+    from http.server import ThreadingHTTPServer
+    from cassiopeia import access, server
+    monkeypatch.setattr(access, "CERT_DIR", tmp_path / "certs")
+    context = access.tls_context("127.0.0.1")
+    assert context is not None
+    first = (tmp_path / "certs" / "server.crt").read_bytes()
+    assert access.ensure_certificate("127.0.0.1") and (tmp_path / "certs" / "server.crt").read_bytes() == first   # reused
+    assert oct((tmp_path / "certs" / "ca.key").stat().st_mode)[-3:] == "600"
+    secure = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+    secure.socket = context.wrap_socket(secure.socket, server_side=True)
+    threading.Thread(target=secure.serve_forever, daemon=True).start()
+    client = ssl.create_default_context(cafile=str(tmp_path / "certs" / "cassiopeia.crt"))   # what the iPhone trusts
+    request = urllib.request.Request(f"https://127.0.0.1:{secure.server_address[1]}/api/ping", headers={"Host": "localhost"})
+    with urllib.request.urlopen(request, context=client) as response:
+        assert response.read() == b'{"app": "cassiopeia"}'
+    secure.shutdown()
+    access.ensure_certificate("192.168.1.40")                                           # the Mac's address changed
+    assert (tmp_path / "certs" / "server.crt").read_bytes() != first
+
+
+def test_plain_http_only_opens_up_when_https_is_unavailable(monkeypatch):
+    from cassiopeia import access
+    monkeypatch.setattr(config, "ENABLE_LAN_ACCESS", True)
+    access.LAN_MODE["mode"] = "https"
+    assert access.bind_host() == "127.0.0.1"
+    access.LAN_MODE["mode"] = "http"
+    assert access.bind_host() == "0.0.0.0"
+    access.LAN_MODE["mode"] = None

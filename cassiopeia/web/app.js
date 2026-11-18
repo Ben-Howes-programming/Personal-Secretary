@@ -319,14 +319,21 @@ async function loadCalendar() {
   const now = new Date(), nowTop = ((now.getHours() - DAY_START) * 60 + now.getMinutes()) / 60 * HOUR_PX;
   for (const d of days) {
     d.timed.sort((a, b) => a.from - b.from); lanes(d.timed);
-    const blocks = d.timed.map((ev) => `<div class="ev ${ev.local_id ? "mine" : ""} ${ev.to - ev.from < 70 ? "short" : ""}" title="${esc(ev.label)}  ${esc(ev.title)} (${esc(ev.source)})" style="top:${ev.from / 60 * HOUR_PX}px;height:${(ev.to - ev.from) / 60 * HOUR_PX - 2}px;left:${ev.lane / ev.lanes * 100}%;width:calc(${100 / ev.lanes}% - 3px)">${esc(ev.title)}<small>${esc(ev.label)}</small></div>`).join("");
+    const blocks = d.timed.map((ev) => `<div class="ev ${ev.local_id ? "mine" : ""} ${ev.suggestion ? "idea" : ""} ${ev.to - ev.from < 70 ? "short" : ""}" title="${esc(ev.label)}  ${esc(ev.title)} (${esc(ev.source)})" style="top:${ev.from / 60 * HOUR_PX}px;height:${(ev.to - ev.from) / 60 * HOUR_PX - 2}px;left:${ev.lane / ev.lanes * 100}%;width:calc(${100 / ev.lanes}% - 3px)">${esc(ev.title)}<small>${esc(ev.label)}</small></div>`).join("");
     const line = d.key === data.today && nowTop > 0 && nowTop < DAY_HOURS * HOUR_PX ? `<div class="nowline" style="top:${nowTop}px"></div>` : "";
     html += `<div class="col ${d.key === data.today ? "now" : ""}">${blocks}${line}</div>`;
   }
   $("#week").innerHTML = html;
   if (!$("#free-form").day.value) $("#free-form").day.value = data.today;
 }
-tabLoaders.calendar = () => loadCalendar().catch((e) => toast(e.message));
+async function loadFeeds(data) {
+  const f = data || await api("/api/feeds");
+  $("#feeds").innerHTML = f.feeds.map((x) => `<div class="row"><span class="grow">${esc(x.name)}<br><span class="hint">${esc(f.kinds[x.kind])}, ${esc(x.where)}${x.count != null ? `, ${x.count} events` : ""}${x.error ? `. ${esc(x.error)}` : ""}</span></span><button class="danger" data-feed-remove="${x.id}">Remove</button></div>`).join("")
+    + (f.suggestions.length ? `<div class="day">Coming up from your suggestion feeds</div>` + f.suggestions.map((s) => `<div class="row"><span class="grow">${s.link ? `<a href="${esc(s.link)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a>` : esc(s.title)}<br><span class="hint">${esc(s.when)}${s.where ? `, ${esc(s.where)}` : ""}</span></span><span class="tag">${esc(s.source)}</span></div>`).join("") : "");
+}
+$("#feed-form").addEventListener("submit", (e) => { e.preventDefault(); const f = e.target; busy(f.querySelector("button"), async () => { await loadFeeds(await api("/api/feeds/add", formData(f))); f.reset(); await loadCalendar(); toast("Subscribed"); }); });
+$("#feeds").addEventListener("click", (e) => { const id = e.target.dataset.feedRemove; if (id) busy(e.target, async () => { await api("/api/feeds/remove", { id: +id }); await loadFeeds(); await loadCalendar(); }); });
+tabLoaders.calendar = () => { loadCalendar().catch((e) => toast(e.message)); loadFeeds().catch(() => {}); };
 const shiftWeek = (days) => { weekStart.setDate(weekStart.getDate() + days); tabLoaders.calendar(); };
 $("#cal-prev").addEventListener("click", () => shiftWeek(-7));
 $("#cal-next").addEventListener("click", () => shiftWeek(7));
@@ -644,7 +651,8 @@ async function loadAccess() {
     ? `<p class="hint">Off. Cassiopeia only answers on this Mac. To use it from your phone or a Siri Shortcut, set ENABLE_LAN_ACCESS=true in .env and restart.</p>`
     : `<div class="row"><span class="grow">Address on your home Wi-Fi</span><code>${esc(a.address || "unknown")}</code></div>`
       + (a.token ? `<div class="row"><span class="grow">Access token</span><code id="token-text" data-token="${esc(a.token)}">hidden</code><button class="quiet" id="token-show">Show</button><button class="danger" id="token-rotate">Make a new one</button></div>` : "")
-      + `<p class="hint">On your phone, open the address, sign in with the token once, then use Share, Add to Home Screen. For Siri, see CASSIOPEIA.md section 4. Home Wi-Fi only: the connection is not encrypted.</p>`;
+      + (a.secure ? `<div class="row"><span class="grow">Certificate for your iPhone</span><code>${esc(a.certificate)}</code></div><p class="hint">Encrypted. First time on the iPhone: open the certificate link in Safari, accept the warning once, install it (Settings, Profile Downloaded), then switch it on under Settings, General, About, Certificate Trust Settings. After that, open the address, sign in with the token, and use Share, Add to Home Screen. For Siri, see CASSIOPEIA.md section 4.</p>`
+                  : `<p class="hint">Plain HTTP, because a certificate could not be made on this Mac. Home Wi-Fi only. On your phone, open the address, sign in with the token, then Share, Add to Home Screen.</p>`);
 }
 $("#access").addEventListener("click", (e) => {
   if (e.target.id === "token-show") { const t = $("#token-text"); t.textContent = t.textContent === "hidden" ? t.dataset.token : "hidden"; }

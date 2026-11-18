@@ -48,7 +48,8 @@ def calendar(start=None, days=7):
         all_day = cal.is_all_day(event)
         if not all_day:
             booked += (ends - begins).total_seconds() / 3600
-        shaped.append({"title": event.get("summary", "Untitled event"), "start": begins.isoformat(),
+        shaped.append({"suggestion": bool(event.get("suggestion")), "link": event.get("link", ""),
+                       "title": event.get("summary", "Untitled event"), "start": begins.isoformat(),
                        "end": ends.isoformat(), "all_day": all_day, "source": event.get("source", "Calendar"),
                        "local_id": event.get("local_id"), "notes": (event.get("description") or "")[:300]})
     return {"start": first.date().isoformat(), "days": days, "events": shaped, "errors": errors,

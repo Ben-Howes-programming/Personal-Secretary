@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 import config
 from ai import claude, voice
-from cassiopeia import (access, accounts, brain, more_pages, briefing, events, lab, notify, pages, protocols, sandbox, scheduler, selfupdate,
+from cassiopeia import (access, accounts, brain, feeds, more_pages, briefing, events, lab, notify, pages, protocols, sandbox, scheduler, selfupdate,
                         store, triggers, vault, weather)
 from database import database as db
 from database import tasks, university
@@ -98,6 +98,7 @@ GET = {
     "/api/triggers": lambda q: triggers.status(),
     "/api/money": lambda q: pages.money(),
     "/api/google": lambda q: accounts.google_status(),
+    "/api/feeds": lambda q: {"feeds": feeds.listing(), "kinds": feeds.KINDS, "suggestions": feeds.suggestions(14, 12)},
     "/api/health": lambda q: more_pages.health_page(q.get("next") == "1"),
     "/api/markets": lambda q: more_pages.markets_page(int(q.get("days", 130))),
     "/api/placements": lambda q: more_pages.placements_page(),
@@ -203,6 +204,9 @@ POST = {
     "/api/inbox/done": guarded(lambda b: pages.set_done(b["id"], bool(b.get("done", True)))),
     "/api/siri": guarded(lambda b: siri(b)),
     "/api/access/rotate": lambda b, q, r: {"token": access.rotate()},
+    "/api/feeds/add": guarded(lambda b: feeds.add(b.get("name"), b.get("url"), b.get("kind")) and
+                                {"feeds": feeds.listing(), "kinds": feeds.KINDS, "suggestions": feeds.suggestions(14, 12)}),
+    "/api/feeds/remove": guarded(lambda b: feeds.remove(b["id"]) and {"feeds": feeds.listing(), "kinds": feeds.KINDS, "suggestions": []}),
     "/api/google/connect": guarded(lambda b: accounts.connect_google(bool(b.get("force")))),
     "/api/health/update": guarded(lambda b: more_pages.health_update(b.get("action"), b)),
     "/api/health/review": guarded(lambda b: more_pages.health_review()),
@@ -302,6 +306,12 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if url.path == "/login":
             return self.login("GET")
+        if url.path == "/cassiopeia.crt":              # public certificate, holds no secret
+            data = access.authority_certificate()
+            if data and (config.ENABLE_LAN_ACCESS or self.is_local()):
+                return self.reply(200, data, "application/x-x509-ca-cert",
+                                  {"Content-Disposition": 'attachment; filename="cassiopeia.crt"'})
+            return self.reply(404, {"error": "No certificate yet."})
         if not self.allowed(url.path):
             return
         query = {key: values[0] for key, values in parse_qs(url.query).items()}
@@ -357,7 +367,20 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def start(port=None):
-    """Start the server on a background thread. Returns the server (call .shutdown() to stop)."""
+    """Start the servers on background threads. Returns the main one (call .shutdown() to stop).
+
+    This Mac always uses plain HTTP on 127.0.0.1. With ENABLE_LAN_ACCESS, other devices get HTTPS on
+    CASS_HTTPS_PORT. If the certificate cannot be made, home access falls back to HTTP on all addresses.
+    """
+    access.LAN_MODE["mode"] = None
+    if config.ENABLE_LAN_ACCESS and port is None:
+        context = access.tls_context(access.lan_address()) if config.ENABLE_LAN_HTTPS else None
+        access.LAN_MODE["mode"] = "https" if context else "http"
+        if context:
+            secure = ThreadingHTTPServer(("0.0.0.0", config.CASS_HTTPS_PORT), Handler)
+            secure.socket = context.wrap_socket(secure.socket, server_side=True)
+            secure.daemon_threads = True
+            threading.Thread(target=secure.serve_forever, name="cassiopeia-https", daemon=True).start()
     server = ThreadingHTTPServer((access.bind_host(), config.CASS_PORT if port is None else port), Handler)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, name="cassiopeia-server", daemon=True).start()

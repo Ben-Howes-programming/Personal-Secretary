@@ -20,6 +20,7 @@ PROMPTS = {
     "morning": ("Write Ben's morning briefing from the context. Order: the one thing to do first, today's "
                 "schedule, deadlines and tasks due within three days, weather in one line, then at most three "
                 "headlines with their source in brackets. At most 170 words, short bullets, no heading. "
+                "If EVENTS HE MIGHT ENJOY is present, mention at most one that fits a free evening. "
                 "If MARKETS TO STUDY is present, end with one line naming one of them as something to read about, "
                 "framed as learning, never as a reason to buy or sell. Use only what the context says."),
     "evening": ("Write Ben's evening summary from the context. Order: what is first tomorrow and when, anything "
@@ -52,6 +53,14 @@ def gather(kind):
                     f"- {item['title']} ({item.get('source', 'news')})" for item in heads))
         except Exception as problem:
             parts.append(f"HEADLINES: unavailable ({str(problem)[:80]}).")
+    try:
+        from cassiopeia import feeds
+        ideas = feeds.suggestions(days=3, limit=4)
+    except Exception:
+        ideas = []
+    if ideas:
+        parts.append("EVENTS HE MIGHT ENJOY (from his suggestion feeds, optional):\n" + "\n".join(
+            f"- {i['title']}, {i['when']}" + (f", {i['where']}" if i["where"] else "") for i in ideas))
     if kind == "morning":
         movers = market_movers()
         if movers:

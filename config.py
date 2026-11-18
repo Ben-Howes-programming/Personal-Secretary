@@ -189,6 +189,8 @@ CASS_PORT = int(os.environ.get("CASS_PORT", "8765"))
 # Reach Cassiopeia from your phone or a Siri Shortcut on the home Wi-Fi. Needs the access token
 # shown in Control. Plain HTTP, so home networks only. Off unless set in .env.
 ENABLE_LAN_ACCESS = _flag("ENABLE_LAN_ACCESS")
+ENABLE_LAN_HTTPS = _flag("ENABLE_LAN_HTTPS", True)      # encrypt home access with a certificate made on this Mac
+CASS_HTTPS_PORT = int(os.environ.get("CASS_HTTPS_PORT", "8766"))
 VAULT_PATH = PROJECT_ROOT / "vault"        # your uploaded notes and assessments (not in Git)
 SANDBOX_PATH = PROJECT_ROOT / "sandbox"    # scratch folder for simulations (not in Git)
 

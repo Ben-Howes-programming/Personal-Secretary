@@ -123,6 +123,7 @@ td.num, th.num { text-align: right; } .up { color: var(--ok); } .down { color: v
 .week .ev { position: absolute; overflow: hidden; border-radius: 5px; padding: 2px 5px; line-height: 1.25;
             background: #2f3a82; border-left: 3px solid var(--caph); color: var(--vellum); }
 .week .ev.short { white-space: nowrap; text-overflow: ellipsis; } .week .ev.short small { display: none; }
+.week .ev.idea { background: transparent; border: 1px dashed var(--caph); opacity: 0.85; }
 .week .ev.mine { background: #4a3a1c; border-left-color: var(--amber); }
 .week .ev small, .week .chip small { color: var(--dim); display: block; }
 .week .chip { display: block; background: #2f3a82; border-radius: 4px; padding: 1px 5px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

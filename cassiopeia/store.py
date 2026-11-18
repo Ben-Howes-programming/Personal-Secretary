@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS cass_updates (
 CREATE TABLE IF NOT EXISTS cass_jobs (
     name TEXT PRIMARY KEY, last_run_ts REAL, last_status TEXT, last_detail TEXT
 );
+CREATE TABLE IF NOT EXISTS cass_feeds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, url TEXT, kind TEXT, last_fetch_ts REAL, last_count INTEGER,
+    last_error TEXT, created_ts REAL
+);
 CREATE TABLE IF NOT EXISTS cass_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, metric TEXT, subject TEXT DEFAULT '', op TEXT, threshold REAL,
     enabled INTEGER DEFAULT 1, last_value REAL, last_checked_ts REAL, created_ts REAL

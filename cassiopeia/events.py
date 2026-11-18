@@ -70,7 +70,12 @@ def between(start, end, force=False):
         db.cache_set(key, {"events": remote, "errors": errors}, 300)
     else:
         remote, errors = cached["events"], cached["errors"]
-    merged = remote + _local_events(start, end)
+    try:
+        from cassiopeia import feeds
+        subscribed = feeds.events_between(start, end, force)
+    except Exception as problem:                 # a broken feed must never break the calendar
+        subscribed, errors = [], errors + [f"Calendar feeds: {str(problem)[:120]}"]
+    merged = remote + subscribed + _local_events(start, end)
     merged.sort(key=lambda event: cal.event_to_datetime(event)[0] or start)
     return merged, errors
 
