@@ -18,7 +18,7 @@ A window opens (Chrome in app mode if Chrome is installed, otherwise your defaul
 | Always running, starts at login | `bash scripts/install_cassiopeia.sh` once. It also adds a Cassiopeia app to `~/Applications` |
 | Undo that | `bash scripts/uninstall_cassiopeia.sh` |
 | The old dashboard | `streamlit run app.py`. No longer needed: every page and the Google connection now live in Cassiopeia. Both use the same database |
-| Run the tests | `python -m pytest tests -q` (52 tests, about 10 seconds, no network) |
+| Run the tests | `python -m pytest tests -q` (53 tests, about 10 seconds, no network) |
 
 No new packages are required. Optional: `pip install pypdf` to search inside PDFs, `pip install pywebview` for a native window without Chrome.
 
@@ -104,7 +104,7 @@ Limits: the connection is plain HTTP, so use it on home Wi-Fi only, never on pub
 
 ## 5. Honest status
 
-Tested on Linux (Python 3.13, headless Chrome): all 52 tests, every page and tab rendered and screenshotted, server security checks, sandbox runs, backtest maths.
+Tested on Linux (Python 3.13, headless Chrome): all 53 tests, every page and tab rendered and screenshotted, server security checks, sandbox runs, backtest maths.
 
 Not tested, because it needs your Mac. Expect first-run fixes:
 
@@ -142,7 +142,7 @@ Nine rules are tested every night on two years of prices for your funds and the 
 | Done | First run on the Mac, all pages ported, Connect Google, placement and price triggers, your own rules, token login with phone and Siri access | 18 November |
 | 1 | Fix what the first run of 0.3 turns up | Check the four new tabs, the Siri shortcut and one text |
 | 2 | HTTPS for home access, so the token is not sent in the clear | A self-signed certificate, trusted once on the phone | Calendar, inbox, money and university are done. The data layer exists in `database/` and `services/`. Add a function to `cassiopeia/pages.py`, a route in `server.py`, a tab in `web/` |
-| 3 | Daily suggestions | Things to study from the study list's biggest moves, and events from Bath university and society calendars if they publish iCal feeds |
+| 3 | Event suggestions | The morning briefing already names a fund to read about from the biggest one-month moves. Next: events from Bath university and society calendars if they publish iCal feeds |
 | 4 | Retire the Streamlit app | Delete `views/`, `ui/`, `app.py` once nothing is missed |
 | 5 | Agents that carry out multi-step jobs | Placement scan, weekly review, study planner. Reuse `brain.AGENTS` and add a step loop with a hard step limit |
 | 6 | Web form filling | Needs a browser automation tool and a confirm-before-submit screen. Never store passwords in the database |

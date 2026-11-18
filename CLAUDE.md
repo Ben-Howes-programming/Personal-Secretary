@@ -143,7 +143,7 @@ Ids for non-Gmail mail are prefixed `ms:` and `icloud:`.
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests -q            # 52 tests, about 10 seconds, no network
+python -m pytest tests -q            # 53 tests, about 10 seconds, no network
 streamlit run app.py                 # then click through the page you changed
 ```
 
@@ -216,6 +216,6 @@ Rules specific to Cassiopeia, on top of section 4:
 8. New tables are named `cass_*` and created in `store.SCHEMA` with `CREATE TABLE IF NOT EXISTS`.
 9. The design: indigo night `#141a3c`, vellum text `#efe6d2`, amber `#f2b33d`, Bricolage Grotesque headings, IBM Plex Sans body. The W of five stars in the header is the navigation and the one loud element. Keep everything else quiet. Sentence case, no all-caps labels, no em dashes.
 
-Status at 0.3.0 (18 Nov, Claude Opus 5.5): 52 tests pass on Linux. 0.2 ran on Ben's Mac; the Health, Markets, Placements and Tutoring tabs, Connect Google, phone access and the new lab rules have not yet run there.
+Status at 0.3.0 (18 Nov, Claude Opus 5.5): 53 tests pass on Linux. 0.2 ran on Ben's Mac; the Health, Markets, Placements and Tutoring tabs, Connect Google, phone access and the new lab rules have not yet run there.
 
 Earlier status (0.2.0): all 41 tests pass on Linux and on Ben's Mac for 0.1, and every page and tab was rendered in headless Chrome. Ben has started 0.1 on his Mac and the window opened. The 0.2 tabs (Calendar, Inbox, Money, University) and the triggers have not run there yet. Voice, iMessage, protocols, the login item and self-update are untested there. Fix first-run reports at the root, then work down the roadmap in `CASSIOPEIA.md` section 8.

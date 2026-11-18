@@ -545,3 +545,14 @@ def test_turn_of_month_holds_the_right_days():
     exposure, switches = lab.exposure(rows, "turn_of_month")
     assert 0.2 < exposure < 0.3 and switches >= 4
     assert set(lab.backtest(rows)) == set(lab.STRATEGIES) and set(lab.RULE_NOTES) == set(lab.STRATEGIES)
+
+
+def test_morning_briefing_mentions_market_movers_from_cache_only():
+    from cassiopeia import briefing
+    from database import database as db
+    closes = [["2026-10-16", 100.0], ["2026-11-17", 112.0]]
+    db.cache_set("hist:WQTM.L", {"symbol": "WQTM.L", "currency": "GBP", "closes": closes}, 60)
+    db.cache_set("hist:VWRP.L", {"symbol": "VWRP.L", "currency": "GBP", "closes": [["2026-10-16", 100.0], ["2026-11-17", 101.0]]}, 60)
+    movers = briefing.market_movers()
+    assert movers[0].startswith("WisdomTree Quantum Computing (Acc) (WQTM.L, you hold it): +12.0%")
+    assert len(movers) == 2                                                    # symbols with no cached prices are skipped

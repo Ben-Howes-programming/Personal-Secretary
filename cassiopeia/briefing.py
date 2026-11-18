@@ -20,7 +20,8 @@ PROMPTS = {
     "morning": ("Write Ben's morning briefing from the context. Order: the one thing to do first, today's "
                 "schedule, deadlines and tasks due within three days, weather in one line, then at most three "
                 "headlines with their source in brackets. At most 170 words, short bullets, no heading. "
-                "Use only what the context says."),
+                "If MARKETS TO STUDY is present, end with one line naming one of them as something to read about, "
+                "framed as learning, never as a reason to buy or sell. Use only what the context says."),
     "evening": ("Write Ben's evening summary from the context. Order: what is first tomorrow and when, anything "
                 "still open today, what to prepare tonight in one line, and one line nudging him to be in bed by "
                 f"{config.BEDTIME_TARGET}. At most 120 words, short bullets, no heading. Use only what the context says."),
@@ -51,12 +52,37 @@ def gather(kind):
                     f"- {item['title']} ({item.get('source', 'news')})" for item in heads))
         except Exception as problem:
             parts.append(f"HEADLINES: unavailable ({str(problem)[:80]}).")
+    if kind == "morning":
+        movers = market_movers()
+        if movers:
+            parts.append("MARKETS TO STUDY (biggest one-month moves on the watchlist, data not advice):\n"
+                         + "\n".join(f"- {line}" for line in movers))
     notes = [m["text"] for m in store.memories(8)]
     if notes:
         parts.append("THINGS BEN ASKED YOU TO REMEMBER:\n" + "\n".join(f"- {n}" for n in notes))
     if errors:
         parts.append("CALENDAR PROBLEMS: " + "; ".join(errors))
     return "\n\n".join(parts)
+
+
+def market_movers(limit=3):
+    """The watchlist's biggest one-month moves, from cached prices only (the briefing never waits on the network)."""
+    from database import database as db
+    from database import finance
+    from services import market
+    fx = (db.cache_get(f"hist:{market.FX_SYMBOL}", allow_stale=True) or {}).get("closes") or []
+    rate = fx[-1][1] if fx else None
+    moves = []
+    for item in finance.list_watchlist():
+        history = db.cache_get(f"hist:{item['symbol']}", allow_stale=True)
+        if not history:
+            continue
+        figures = market.summarise(history, rate, item.get("currency"))
+        if figures["month"] is not None:
+            label = "you hold it" if item["kind"] == "holding" else "study list"
+            moves.append((abs(figures["month"]), f"{item['name'] or item['symbol']} ({item['symbol']}, {label}): "
+                                                 f"{figures['month']:+.1f}% over a month"))
+    return [line for _size, line in sorted(moves, reverse=True)[:limit]]
 
 
 def plain(kind, context):
