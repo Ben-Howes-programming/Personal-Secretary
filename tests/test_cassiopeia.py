@@ -498,3 +498,50 @@ def test_wrong_tokens_lock_an_address_out(monkeypatch):
     good = {"Host": "192.168.1.23", "Authorization": f"Bearer {access.token()}"}
     assert access.check("192.168.1.50", good, "/api/state") == (False, "Too many wrong tokens. Try again in ten minutes.")
     assert access.check("192.168.1.51", good, "/api/state")[0] is True                 # other devices unaffected
+
+
+# Trading lab rules ---------------------------------------------------------------
+def make_rows(closes, start_month=1):
+    """[date, open, close] rows, 20 trading days a month, opens equal to the previous close."""
+    rows = []
+    for i, close in enumerate(closes):
+        month, day = start_month + i // 20, 1 + i % 20
+        rows.append([f"2026-{month:02d}-{day:02d}", closes[i - 1] if i else close, close])
+    return rows
+
+
+def test_position_rules_never_see_the_future():
+    from cassiopeia import lab
+    rows = make_rows([100 + i for i in range(160)])                            # a steady rise
+    for name in lab.POSITION_RULES:
+        held = lab.positions(rows, name)
+        assert len(held) == len(rows) - 1
+        # changing a later price must not change any earlier decision
+        changed = [list(r) for r in rows]
+        changed[-1][2] = 1.0
+        assert lab.positions(changed, name)[:-1] == held[:-1], name
+    trend = lab.positions(rows, "trend_50")
+    assert trend[:49] == [0] * 49 and all(trend[49:])                            # out until 50 days of history, then in
+    assert lab.positions(rows, "momentum_6m")[126:] == [1] * (len(rows) - 127)
+
+
+def test_dip_rule_and_costs():
+    from cassiopeia import lab
+    rows = make_rows([100, 97, 98, 98, 98])                                      # a 3% fall, then a bounce
+    assert lab.positions(rows, "dip_buy") == [0, 1, 0, 0]
+    free = dict(lab.daily_returns(rows, "dip_buy", cost_bps=0))
+    assert free[rows[2][0]] == pytest.approx(98 / 97 - 1)                        # caught the bounce
+    costly = dict(lab.daily_returns(rows, "dip_buy", cost_bps=100))
+    assert costly[rows[2][0]] == pytest.approx(98 / 97 - 1 - 0.005)              # half the round trip in
+    assert costly[rows[3][0]] == pytest.approx(-0.005)                           # and half out
+
+
+def test_turn_of_month_holds_the_right_days():
+    from cassiopeia import lab
+    rows = make_rows([100.0] * 60)                                               # three months of 20 days
+    held = lab.positions(rows, "turn_of_month")
+    days_held = [rows[i + 1][0][-2:] for i, h in enumerate(held) if h]
+    assert days_held[:5] == ["02", "03", "19", "20", "01"]
+    exposure, switches = lab.exposure(rows, "turn_of_month")
+    assert 0.2 < exposure < 0.3 and switches >= 4
+    assert set(lab.backtest(rows)) == set(lab.STRATEGIES) and set(lab.RULE_NOTES) == set(lab.STRATEGIES)

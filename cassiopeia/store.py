@@ -71,6 +71,10 @@ def initialise():
         # Emails analysed by version 0.5 carry stale "needs action" flags with no record of who set them.
         # Mark them as legacy once, so they stop crowding the inbox. Nothing is deleted.
         c.execute("UPDATE emails SET analysed_by = 'legacy' WHERE analysed_by IS NULL")
+        have = {row["name"] for row in c.execute("PRAGMA table_info(cass_backtests)").fetchall()}
+        for column in ("exposure REAL", "switches INTEGER"):           # added 18 Nov 2026 for the new lab rules
+            if column.split()[0] not in have:
+                c.execute(f"ALTER TABLE cass_backtests ADD COLUMN {column}")
 
 
 # Memories ----------------------------------------------------------

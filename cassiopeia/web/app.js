@@ -224,14 +224,17 @@ async function loadLab() {
   for (const row of lab.paper) paper[`${row.symbol}|${row.strategy}`] = row;
   let html = "";
   for (const [symbol, strategies] of Object.entries(bySymbol)) {
-    html += `<div class="day">${esc(lab.names[symbol] || symbol)} (${esc(symbol)})</div><table><tr><th>Pattern</th><th class="num">Whole period</th><th class="num">Per year</th><th class="num">Days up</th><th class="num">Worst fall</th><th class="num">Paper account</th></tr>`;
+    const best = Object.entries(strategies).filter(([k]) => k !== "hold").sort((a, b) => b[1].total_return - a[1].total_return)[0];
+    const beat = best && strategies.hold && best[1].total_return > strategies.hold.total_return;
+    html += `<details ${html.includes("<details class=\"symbol\"") ? "" : "open"} class="symbol"><summary><strong>${esc(lab.names[symbol] || symbol)}</strong> (${esc(symbol)}) <span class="hint">${beat ? `best rule: ${esc(lab.strategies[best[0]])}, ${pct(best[1].total_return)} against hold ${pct(strategies.hold.total_return)}` : "no rule beat buy and hold"}</span></summary><table><tr><th>Pattern</th><th class="num">Whole period</th><th class="num">Per year</th><th class="num">Days up</th><th class="num">Worst fall</th><th class="num">In market</th><th class="num">Switches</th><th class="num">Paper account</th></tr>`;
     for (const [key, label] of Object.entries(lab.strategies)) {
       const r = strategies[key]; if (!r) continue;
       const p = paper[`${symbol}|${key}`];
-      html += `<tr><td>${esc(label)}</td><td class="num">${pct(r.total_return)}</td><td class="num">${pct(r.annualised)}</td><td class="num">${(r.win_rate * 100).toFixed(0)}%</td><td class="num">${pct(r.max_drawdown)}</td><td class="num">${p ? `£${Math.round(p.equity).toLocaleString("en-GB")} after ${p.days} day${p.days === 1 ? "" : "s"}` : ""}</td></tr>`;
+      html += `<tr><td>${esc(label)}</td><td class="num">${pct(r.total_return)}</td><td class="num">${pct(r.annualised)}</td><td class="num">${(r.win_rate * 100).toFixed(0)}%</td><td class="num">${pct(r.max_drawdown)}</td><td class="num">${r.exposure == null ? "" : Math.round(r.exposure * 100) + "%"}</td><td class="num">${r.switches ?? ""}</td><td class="num">${p ? `£${Math.round(p.equity).toLocaleString("en-GB")} after ${p.days} day${p.days === 1 ? "" : "s"}` : ""}</td></tr>`;
     }
-    html += "</table>";
+    html += "</table></details>";
   }
+  html = `<details><summary>What each rule tests (${Object.keys(lab.strategies).length} rules)</summary>${Object.entries(lab.strategies).map(([k, label]) => `<p><strong>${esc(label)}.</strong> ${esc(lab.notes[k] || "")}</p>`).join("")}<p class="hint">How to read the table: a rule is only interesting if it beats "Buy once and hold" after costs, ideally with a smaller worst fall. Few switches means few trades, so one lucky trade can dominate. The paper account column is the honest test, because it only counts days after the rule was fixed.</p></details>` + html;
   html += `<div class="day">Study list (things to learn from, not things to buy)</div>` + lab.study_list.map((s) => `<div class="row"><span class="grow">${esc(s.name)} (${esc(s.symbol)})</span><span class="meta">${esc(s.teaches)}</span></div>`).join("");
   $("#lab-tables").innerHTML = lab.backtests.length ? html : `<p class="hint">No results yet. The lab runs at night, or press "Run the lab now". It needs the yfinance package and an internet connection.</p>` + html;
 }

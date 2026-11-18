@@ -143,7 +143,7 @@ Ids for non-Gmail mail are prefixed `ms:` and `icloud:`.
 
 ```bash
 source .venv/bin/activate
-python -m pytest tests -q            # 41 tests, about 10 seconds, no network
+python -m pytest tests -q            # 52 tests, about 10 seconds, no network
 streamlit run app.py                 # then click through the page you changed
 ```
 
@@ -185,7 +185,10 @@ cassiopeia/
   server.py       Standard-library HTTP server on 127.0.0.1:8765. GET and POST route tables near the top
   brain.py        Chat. Claude requests actions as <action>{json}</action> lines; run_action() carries them out
   pages.py        Data for the Today tabs: calendar, inbox, money, university. No Claude call on load
-  triggers.py     Unprompted alerts (deadline, urgent email, event soon). Once each, never in quiet hours
+  more_pages.py   Data for the Health, Markets, Placements and Tutoring tabs
+  accounts.py     Connect Google from the window, connection status (never returns the token)
+  access.py       Who may connect: this Mac, or a home-network device with the access token. LOCAL_ONLY routes
+  triggers.py     Unprompted alerts and Ben's own rules (cass_rules). Once each, never in quiet hours
   briefing.py     Morning and evening briefings. Falls back to a rule-based text if Claude is unreachable
   scheduler.py    Background loop. due() decides when a daily job runs. Optional activity sampling
   notify.py       Mac notification, iMessage to OWNER_PHONE, email to the owner's own address. Nothing else
@@ -202,7 +205,7 @@ cassiopeia/
 
 Rules specific to Cassiopeia, on top of section 4:
 
-1. The server stays on 127.0.0.1 until a token login exists. Keep the Host check and the `X-Cassiopeia` header check.
+1. Every request goes through `access.check`. This Mac needs a localhost Host header; anything else needs the token. Keep the `X-Cassiopeia` header check for cookie and local requests. Add any route that changes code, runs code, deletes files or changes logins to `access.LOCAL_ONLY`. Never return the token to a non-local caller.
 2. Every POST route that changes or sends something goes in the `POST` table in `server.py`, never under `GET`.
 3. In `web/app.js`, text from the server passes through `esc()` or `markdown()` before it becomes HTML.
 4. A new tab under Today needs four things: a data function in `pages.py`, a route in `server.py`, a `tabLoaders` entry in `web/app.js`, and a test. Loading a tab must cost zero tokens.
@@ -213,4 +216,6 @@ Rules specific to Cassiopeia, on top of section 4:
 8. New tables are named `cass_*` and created in `store.SCHEMA` with `CREATE TABLE IF NOT EXISTS`.
 9. The design: indigo night `#141a3c`, vellum text `#efe6d2`, amber `#f2b33d`, Bricolage Grotesque headings, IBM Plex Sans body. The W of five stars in the header is the navigation and the one loud element. Keep everything else quiet. Sentence case, no all-caps labels, no em dashes.
 
-Status at hand-over (0.2.0): all 41 tests pass on Linux and on Ben's Mac for 0.1, and every page and tab was rendered in headless Chrome. Ben has started 0.1 on his Mac and the window opened. The 0.2 tabs (Calendar, Inbox, Money, University) and the triggers have not run there yet. Voice, iMessage, protocols, the login item and self-update are untested there. Fix first-run reports at the root, then work down the roadmap in `CASSIOPEIA.md` section 8.
+Status at 0.3.0 (18 Nov, Claude Opus 5.5): 52 tests pass on Linux. 0.2 ran on Ben's Mac; the Health, Markets, Placements and Tutoring tabs, Connect Google, phone access and the new lab rules have not yet run there.
+
+Earlier status (0.2.0): all 41 tests pass on Linux and on Ben's Mac for 0.1, and every page and tab was rendered in headless Chrome. Ben has started 0.1 on his Mac and the window opened. The 0.2 tabs (Calendar, Inbox, Money, University) and the triggers have not run there yet. Voice, iMessage, protocols, the login item and self-update are untested there. Fix first-run reports at the root, then work down the roadmap in `CASSIOPEIA.md` section 8.
