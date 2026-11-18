@@ -28,7 +28,21 @@ def temp_world(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(config, "VAULT_PATH", tmp_path / "vault")
     monkeypatch.setattr(config, "SANDBOX_PATH", tmp_path / "sandbox")
-    from cassiopeia import store, weather
+    # Tests must never reach the outside world, whatever your real .env switches on.
+    # (Before 18 Nov 2026 they read ENABLE_IMESSAGE=true from .env and sent real texts.)
+    for flag in ("ENABLE_IMESSAGE", "ENABLE_EMAIL_TO_SELF", "ENABLE_LAN_ACCESS", "ENABLE_ACTIVITY_TRACKING",
+                 "ENABLE_GMAIL_DRAFTS", "ENABLE_CALENDAR_WRITE"):
+        monkeypatch.setattr(config, flag, False)
+    monkeypatch.setattr(config, "OWNER_PHONE", "")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", None)
+    from ai import voice
+    from cassiopeia import notify, protocols, store, weather
+    monkeypatch.setattr(claude, "find_cli", lambda: None)                  # no real Claude calls
+    monkeypatch.setattr(notify, "_osascript", lambda *a: None)              # no banners, no Messages
+    monkeypatch.setattr(voice, "speak", lambda *a, **k: True)               # no talking out loud
+    monkeypatch.setattr(voice, "stop_speaking", lambda: None)
+    monkeypatch.setattr(protocols, "IS_MAC", False)                         # no Shortcuts runs
+    monkeypatch.setattr(protocols.webbrowser, "open", lambda *a, **k: True)
     store.initialise()
     monkeypatch.setattr(weather, "get", lambda force=False: {"place": "Bath", "error": "offline in tests", "days": []})
     yield
@@ -654,3 +668,10 @@ def test_plain_http_only_opens_up_when_https_is_unavailable(monkeypatch):
     access.LAN_MODE["mode"] = "http"
     assert access.bind_host() == "0.0.0.0"
     access.LAN_MODE["mode"] = None
+
+
+def test_tests_cannot_message_you_even_if_env_switches_it_on():
+    from cassiopeia import notify, store
+    assert config.ENABLE_IMESSAGE is False and config.OWNER_PHONE == ""
+    assert notify.text_me("must not send")[0] is False
+    assert store.outbox()[0]["status"] == "off"
